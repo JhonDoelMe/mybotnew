@@ -16,7 +16,7 @@ import currency
 import air_raid
 import tcc_news
 import button_handlers
-from database import setup_database
+from database import get_connection, get_or_create_user, setup_database
 
 # Настройка логов
 logging.basicConfig(
@@ -37,23 +37,28 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 main_keyboard = [['Погода'], ['Курс валют'], ['Воздушная тревога'], ['Новости ТЦК']]
 main_reply_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
     user = update.effective_user
-    logger.info(f"User {user.id} started bot")
+    with get_connection() as conn:
+        get_or_create_user(conn, {
+            'id': user.id,
+            'username': user.username,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'language_code': user.language_code
+        })
+    
     context.user_data.clear()
-    try:
-        await update.message.reply_markdown_v2(
-            fr"Привет\, {user.mention_markdown_v2()}\! 👋\n\nВыберите раздел\:",
-            reply_markup=main_reply_markup,
-        )
-    except Exception as e:
-        logger.error(f"Start error: {e}")
-        await update.message.reply_text("Ошибка запуска бота")
+    await update.message.reply_text(
+        f"Привет, {user.first_name}! Выберите раздел:",
+        reply_markup=main_reply_markup
+    )
 
-async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка главного меню"""
     text = update.message.text
-    user = update.effective_user
-    logger.info(f"User {user.id} selected {text}")
+    user_id = update.effective_user.id
     
     try:
         if text == 'Погода':
@@ -68,35 +73,36 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         elif text == 'Новости ТЦК':
             await tcc_news.show_tcc_news_menu(update, context)
             context.user_data['current_module'] = 'tcc_news'
-        else:
-            await update.message.reply_text("Неизвестная команда")
     except Exception as e:
         logger.error(f"Menu error: {e}")
         await update.message.reply_text("Ошибка обработки команды")
 
 async def route_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if 'awaiting_city' in context.user_data:
-            await weather.handle_city_change(update, context)
-        elif 'current_module' in context.user_data:
-            await button_handlers.handle_module_buttons(update, context)
-        else:
-            await handle_main_menu(update, context)
-    except Exception as e:
-        logger.error(f"Routing error: {e}")
-        await update.message.reply_text("Произошла ошибка маршрутизации")
-        await start(update, context)
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(f"Update {update} caused error: {context.error}")
+    """Маршрутизатор сообщений"""
+    user_id = update.effective_user.id
+    
+    # Проверка регистрации пользователя
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+        if not cursor.fetchone():
+            await start(update, context)
+            return
+    
+    if 'awaiting_city' in context.user_data:
+        await weather.handle_city_change(update, context)
+    elif 'current_module' in context.user_data:
+        await button_handlers.handle_module_buttons(update, context)
+    else:
+        await handle_main_menu(update, context)
 
 async def post_init(application):
-    """Асинхронная функция инициализации"""
-    logger.info("Initializing database...")
+    """Инициализация при запуске"""
     setup_database()
+    logger.info("Database initialized")
 
 def create_application():
-    """Фабрика приложения бота"""
+    """Создание приложения бота"""
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN not set")
     
@@ -105,17 +111,16 @@ def create_application():
         .post_init(post_init)\
         .build()
 
-    # Регистрация обработчиков
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_messages))
-    app.add_error_handler(error_handler)
     
     return app
 
 def main():
+    """Точка входа"""
     try:
         app = create_application()
-        logger.info("Бот запущен")
+        logger.info("Bot started")
         app.run_polling()
     except Exception as e:
         logger.critical(f"Bot failed: {e}")

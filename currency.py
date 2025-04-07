@@ -1,52 +1,55 @@
-import os
 import requests
-import time
-from functools import lru_cache
-from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
+from database import get_connection, get_user_settings, update_user_setting
 import logging
 
-load_dotenv()
 logger = logging.getLogger(__name__)
+
 NBU_EXCHANGE_RATE_URL = "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?json"
-CACHE_TIME = 3600  # 1 час
 
-currency_keyboard = [['USD', 'EUR'], ['Вернуться в главное меню']]
-currency_reply_markup = ReplyKeyboardMarkup(currency_keyboard, resize_keyboard=True)
-
-@lru_cache(maxsize=1)
-def get_cached_rates():
-    """Кэширование курсов валют"""
-    try:
-        response = requests.get(NBU_EXCHANGE_RATE_URL, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Currency API error: {e}")
-        raise
-
-async def show_currency_menu(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text("Выберите валюту:", reply_markup=currency_reply_markup)
-
-async def get_exchange_rate(update: Update, context: CallbackContext) -> None:
-    try:
-        # Очистка кэша если устарел
-        if get_cached_rates.cache_info().currsize > 0 and \
-           time.time() - get_cached_rates.cache_info().created > CACHE_TIME:
-            get_cached_rates.cache_clear()
-
-        rates = get_cached_rates()
-        currency_code = update.message.text.upper()
+async def show_currency_menu(update: Update, context: CallbackContext):
+    """Показать меню валют"""
+    user_id = update.effective_user.id
+    with get_connection() as conn:
+        settings = get_user_settings(conn, user_id)
         
-        for rate in rates:
-            if rate['cc'] == currency_code:
-                message = (f"Курс {rate['cc']} к гривне (UAH) на {rate['exchangedate']}:\n"
-                          f"1 {rate['cc']} = {rate['rate']} UAH")
-                await update.message.reply_text(message)
-                return
+        keyboard = [
+            ['USD', 'EUR'],
+            ['Изменить валюту'],
+            ['Вернуться в главное меню']
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         
-        await update.message.reply_text(f"Курс для {currency_code} не найден")
-    except Exception as e:
-        logger.error(f"Exchange rate error: {e}")
-        await update.message.reply_text("Ошибка получения курса валют. Попробуйте позже.")
+        await update.message.reply_text(
+            f"Текущая валюта: {settings['currency_preference']}",
+            reply_markup=reply_markup
+        )
+
+async def get_exchange_rate(update: Update, context: CallbackContext):
+    """Получить курс валюты"""
+    user_id = update.effective_user.id
+    currency_code = update.message.text
+    
+    with get_connection() as conn:
+        # Обновляем предпочтения пользователя
+        update_user_setting(conn, user_id, 'currency_preference', currency_code)
+        
+        try:
+            response = requests.get(NBU_EXCHANGE_RATE_URL, timeout=10)
+            response.raise_for_status()
+            rates = response.json()
+            
+            for rate in rates:
+                if rate['cc'] == currency_code:
+                    message = (
+                        f"Курс {rate['cc']} к гривне на {rate['exchangedate']}:\n"
+                        f"1 {rate['cc']} = {rate['rate']} UAH"
+                    )
+                    await update.message.reply_text(message)
+                    return
+            
+            await update.message.reply_text("Валюта не найдена")
+        except Exception as e:
+            logger.error(f"Currency error: {e}")
+            await update.message.reply_text("Ошибка получения курса")
