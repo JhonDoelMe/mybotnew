@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Импорт модулей (предполагается, что они у тебя есть в проекте)
+# Импорт модулей
 import weather
 import currency
 import air_raid
@@ -25,7 +25,8 @@ import button_handlers
 
 # Настройка логов
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.clear()
     try:
         await update.message.reply_markdown_v2(
-            fr"Привет, {user.mention_markdown_v2()}! 👋\n\nВыберите интересующий вас раздел:",
+            fr"Привет\, {user.mention_markdown_v2()}\! 👋\n\nВыберите интересующий вас раздел\:",
             reply_markup=main_reply_markup,
         )
     except Exception as e:
@@ -120,16 +121,16 @@ def main():
         logger.critical("Ошибка: TELEGRAM_BOT_TOKEN не найден в .env")
         return
 
-    # Сборка приложения (JobQueue создаётся автоматически)
+    # Создаем приложение
     app = ApplicationBuilder()\
         .token(TELEGRAM_BOT_TOKEN)\
         .build()
 
-    # Если нужен кастомный планировщик:
+    # Если нужно использовать AsyncIOScheduler
     # scheduler = AsyncIOScheduler(timezone=pytz.utc)
     # app.job_queue.scheduler = scheduler
 
-    # Обработчики
+    # Регистрируем обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_messages))
     app.add_error_handler(error_handler)
@@ -137,6 +138,5 @@ def main():
     logger.info("Бот успешно запущен.")
     app.run_polling()
 
-# Запуск
 if __name__ == "__main__":
     main()
