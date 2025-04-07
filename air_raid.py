@@ -5,6 +5,7 @@ from telegram.ext import CallbackContext
 from database import get_connection, get_user_settings, update_user_setting
 from dotenv import load_dotenv
 import logging
+import json
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ async def check_air_raid(update: Update, context: CallbackContext):
         return
     
     try:
-        params = {"token": ALERTS_API_TOKEN}  # Токен передается как параметр
+        params = {"token": ALERTS_API_TOKEN}
         async with aiohttp.ClientSession() as session:
             async with session.get(ALERTS_API_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 if response.status == 401:
@@ -46,8 +47,18 @@ async def check_air_raid(update: Update, context: CallbackContext):
                     return
                 response.raise_for_status()
                 alerts = await response.json()
+                logger.info(f"API response: {alerts}")  # Для отладки
         
-        active_alerts = [region for region, status in alerts.items() if status['enabled']]
+        # Проверяем тип данных
+        if isinstance(alerts, str):
+            await update.message.reply_text(f"Ошибка API: {alerts}")
+            return
+        elif not isinstance(alerts, list):
+            await update.message.reply_text("Ошибка: Неверный формат данных от API")
+            return
+        
+        # Обрабатываем alerts как список словарей
+        active_alerts = [alert["region"] for alert in alerts if alert.get("enabled", False)]
         
         if active_alerts:
             message = "🚨 Тревога в регионах:\n" + "\n".join(active_alerts)
