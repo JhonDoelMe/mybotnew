@@ -3,17 +3,17 @@ import json
 import os
 from datetime import datetime, timedelta
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
+from telegram.tl.functions.messages import GetHistoryRequest
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
 from dotenv import load_dotenv
+import database  # Импортируем модуль database
 
 load_dotenv()
 TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID")
 TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
 
 CONFIG_FILE = 'config.json'
-PROCESSED_NEWS = set()  # Множество для хранения текстов уже обработанных новостей
 
 # Клавиатура модуля "Новости ТЦК"
 tcc_news_keyboard = [['Получить последние новости'], ['Вернуться в главное меню']]
@@ -35,9 +35,22 @@ async def get_channel_messages(client, channel_id, since_date):
         print(f"Ошибка при получении сообщений из канала {channel_id}: {e}")
         return []
 
+def is_news_processed(conn, channel_id, message_text):
+    """Проверяет, была ли новость уже обработана."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM processed_news WHERE channel_id=? AND message_text=?", (channel_id, message_text))
+    return cursor.fetchone() is not None
+
+def mark_news_as_processed(conn, channel_id, message_text):
+    """Помечает новость как обработанную."""
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO processed_news (channel_id, message_text) VALUES (?, ?)", (channel_id, message_text))
+    conn.commit()
+
 def get_tcc_news(update: Update, context: CallbackContext) -> None:
     """Получает и отправляет последние новости ТЦК из каналов за последние три дня."""
     async def main():
+        conn = database.get_connection()  # Получаем соединение с базой данных
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
@@ -71,9 +84,9 @@ def get_tcc_news(update: Update, context: CallbackContext) -> None:
                     for message in messages:
                         if message.text:
                             for keyword in keywords:
-                                if keyword.lower() in message.text.lower() and message.text not in PROCESSED_NEWS:
+                                if keyword.lower() in message.text.lower() and not is_news_processed(conn, channel_id, message.text):
                                     found_news.append(f"Источник: {channel_id}\n{message.text}\n\n")
-                                    PROCESSED_NEWS.add(message.text) # Добавляем новость в множество обработанных
+                                    mark_news_as_processed(conn, channel_id, message.text) # Помечаем новость как обработанную
                                     break # Переходим к следующему сообщению, если ключевое слово найдено
 
             await client.disconnect()
@@ -94,6 +107,8 @@ def get_tcc_news(update: Update, context: CallbackContext) -> None:
             update.message.reply_text("Ошибка при чтении файла конфигурации 'config.json'.")
         except Exception as e:
             update.message.reply_text(f"Произошла непредвиденная ошибка при получении новостей ТЦК: {e}")
+        finally:
+            database.close_connection(conn) # Закрываем соединение с базой данных
 
     import asyncio
     asyncio.run(main())
