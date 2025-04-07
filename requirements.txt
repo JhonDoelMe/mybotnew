@@ -1,3 +1,6 @@
-python-telegram-bot
+python-telegram-bot>=20.0
 python-dotenv
-# Добавим сюда библиотеки для парсинга, работы с погодой, курсами валют и базой данных по мере необходимости
+apscheduler
+pytz
+requests
+beautifulsoup4
