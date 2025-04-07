@@ -1,76 +1,67 @@
-# weather.py
 import os
 import requests
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import CallbackContext
+from telegram.ext import CallbackContext, ConversationHandler
+import logging
 
 load_dotenv()
-OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
-BASE_URL = "http://api.openweathermap.org/data/2.5/weather?"
+logger = logging.getLogger(__name__)
 
-# Клавиатура модуля "Погода"
-weather_keyboard = [['Текущая погода'], ['Вернуться в главное меню']]
+OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
+BASE_URL = "http://api.openweathermap.org/data/2.5/weather"
+CITY = "Kyiv,UA"  # Город по умолчанию
+
+weather_keyboard = [['Текущая погода'], ['Сменить город'], ['Вернуться в главное меню']]
 weather_reply_markup = ReplyKeyboardMarkup(weather_keyboard, resize_keyboard=True)
 
-def show_weather_menu(update: Update, context: CallbackContext) -> None:
-    """Отправляет меню погоды."""
-    update.message.reply_text("Выберите действие:", reply_markup=weather_reply_markup)
+async def show_weather_menu(update: Update, context: CallbackContext) -> None:
+    await update.message.reply_text("Выберите действие:", reply_markup=weather_reply_markup)
 
-def get_weather(update: Update, context: CallbackContext) -> None:
-    """Получает и отправляет информацию о погоде."""
-    city = "Samar,UA"  # Пока что зададим город по умолчанию
-    params = {
-        "q": city,
-        "appid": OPENWEATHERMAP_API_KEY,
-        "units": "metric",  # Градусы Цельсия
-        "lang": "ru"
-    }
-
+async def get_weather(update: Update, context: CallbackContext) -> None:
+    city = context.user_data.get('weather_city', CITY)
     try:
-        response = requests.get(BASE_URL, params=params)
-        response.raise_for_status()  # Проверка на ошибки HTTP
-        weather_data = response.json()
+        params = {
+            "q": city,
+            "appid": OPENWEATHERMAP_API_KEY,
+            "units": "metric",
+            "lang": "ru"
+        }
+        response = requests.get(BASE_URL, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
 
-        if weather_data["cod"] == 200:
-            weather_description = weather_data["weather"][0]["description"]
-            temperature = weather_data["main"]["temp"]
-            humidity = weather_data["main"]["humidity"]
-            wind_speed = weather_data["wind"]["speed"]
+        if data.get("cod") != 200:
+            raise ValueError(data.get("message", "Unknown error"))
 
-            weather_emoji = get_weather_emoji(weather_description)
+        weather_info = {
+            "city": data["name"],
+            "temp": data["main"]["temp"],
+            "feels_like": data["main"]["feels_like"],
+            "humidity": data["main"]["humidity"],
+            "wind": data["wind"]["speed"],
+            "description": data["weather"][0]["description"].capitalize(),
+            "icon": data["weather"][0]["icon"]
+        }
 
-            message = f"Погода в городе {weather_data['name']} {weather_emoji}\n"
-            message += f"Описание: {weather_description.capitalize()}\n"
-            message += f"Температура: {temperature}°C\n"
-            message += f"Влажность: {humidity}%\n"
-            message += f"Ветер: {wind_speed} м/с"
-
-            update.message.reply_text(message)
-        else:
-            update.message.reply_text(f"Произошла ошибка при получении погоды: {weather_data['message']}")
-
-    except requests.exceptions.RequestException as e:
-        update.message.reply_text(f"Ошибка при запросе к API погоды: {e}")
-    except KeyError:
-        update.message.reply_text("Не удалось обработать данные о погоде. Попробуйте позже.")
+        emoji = get_weather_emoji(weather_info["description"])
+        message = (
+            f"{emoji} Погода в {weather_info['city']}:\n"
+            f"{weather_info['description']}\n"
+            f"Температура: {weather_info['temp']}°C (ощущается как {weather_info['feels_like']}°C)\n"
+            f"Влажность: {weather_info['humidity']}%\n"
+            f"Ветер: {weather_info['wind']} м/с"
+        )
+        await update.message.reply_text(message)
     except Exception as e:
-        update.message.reply_text(f"Произошла непредвиденная ошибка: {e}")
+        logger.error(f"Weather error: {e}")
+        await update.message.reply_text("Ошибка получения погоды. Попробуйте позже.")
 
 def get_weather_emoji(description: str) -> str:
-    """Возвращает эмодзи в зависимости от описания погоды."""
-    description = description.lower()
-    if "ясно" in description:
-        return "☀️"
-    elif "облачно" in description:
-        return "☁️"
-    elif "дождь" in description or "ливень" in description:
-        return "🌧️"
-    elif "снег" in description:
-        return "❄️"
-    elif "гроза" in description:
-        return "⛈️"
-    elif "туман" in description:
-        return "🌫️"
-    else:
-        return "❓"
+    desc = description.lower()
+    if "дождь" in desc: return "🌧️"
+    elif "снег" in desc: return "❄️"
+    elif "ясно" in desc: return "☀️"
+    elif "облачно" in desc: return "☁️"
+    elif "гроза" in desc: return "⛈️"
+    else: return "🌤️"

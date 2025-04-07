@@ -1,8 +1,5 @@
-# main.py
-
 import os
 import logging
-import pytz
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -11,26 +8,28 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     filters,
-    JobQueue,
 )
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Импорт модулей
 import weather
 import currency
 import air_raid
 import tcc_news
-import database
 import button_handlers
+from database import setup_database
 
 # Настройка логов
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
-    level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# Загрузка токена
+# Загрузка конфигурации
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -38,25 +37,24 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 main_keyboard = [['Погода'], ['Курс валют'], ['Воздушная тревога'], ['Новости ТЦК']]
 main_reply_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
 
-# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    logger.info(f"Пользователь {user.id} ({user.username}) запустил бота.")
+    logger.info(f"User {user.id} started bot")
     context.user_data.clear()
     try:
         await update.message.reply_markdown_v2(
-            fr"Привет\, {user.mention_markdown_v2()}\! 👋\n\nВыберите интересующий вас раздел\:",
+            fr"Привет\, {user.mention_markdown_v2()}\! 👋\n\nВыберите раздел\:",
             reply_markup=main_reply_markup,
         )
     except Exception as e:
-        logger.error(f"Ошибка при /start: {e}")
-        await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
+        logger.error(f"Start error: {e}")
+        await update.message.reply_text("Ошибка запуска бота")
 
-# Обработка главного меню
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     user = update.effective_user
-    logger.info(f"Пользователь {user.id} выбрал {text} в главном меню.")
+    logger.info(f"User {user.id} selected {text}")
+    
     try:
         if text == 'Погода':
             await weather.show_weather_menu(update, context)
@@ -71,72 +69,44 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await tcc_news.show_tcc_news_menu(update, context)
             context.user_data['current_module'] = 'tcc_news'
         else:
-            await update.message.reply_text("Не понимаю ваш запрос.")
+            await update.message.reply_text("Неизвестная команда")
     except Exception as e:
-        logger.error(f"Ошибка в главном меню: {e}")
-        await update.message.reply_text("Произошла ошибка при обработке запроса.")
+        logger.error(f"Menu error: {e}")
+        await update.message.reply_text("Ошибка обработки команды")
 
-# Обработка кнопок модулей
-async def handle_module_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text
-    user = update.effective_user
-    current_module = context.user_data.get('current_module')
-    logger.info(f"Пользователь {user.id} нажал '{text}' в модуле '{current_module}'")
-
-    try:
-        if text == 'Вернуться в главное меню':
-            await start(update, context)
-            context.user_data.pop('current_module', None)
-            return
-
-        if current_module == 'weather':
-            await button_handlers.handle_weather_buttons(update, context)
-        elif current_module == 'currency':
-            await button_handlers.handle_currency_buttons(update, context)
-        elif current_module == 'air_raid':
-            await button_handlers.handle_air_raid_buttons(update, context)
-        elif current_module == 'tcc_news':
-            await button_handlers.handle_tcc_news_buttons(update, context)
-        else:
-            await update.message.reply_text("Не понимаю ваш запрос в этом разделе.")
-    except Exception as e:
-        logger.error(f"Ошибка при нажатии кнопки: {e}")
-        await update.message.reply_text("Произошла ошибка при обработке запроса.")
-
-# Универсальный роутер
 async def route_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    current_module = context.user_data.get('current_module')
-    if current_module:
-        await handle_module_buttons(update, context)
+    if 'current_module' in context.user_data:
+        await button_handlers.handle_module_buttons(update, context)
     else:
         await handle_main_menu(update, context)
 
-# Обработка ошибок
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(f"Ошибка во время обработки обновления: {context.error}")
+    logger.error(f"Update {update} caused error: {context.error}")
 
-# Главная функция
-def main():
+def create_application():
+    """Фабрика приложения бота"""
     if not TELEGRAM_BOT_TOKEN:
-        logger.critical("Ошибка: TELEGRAM_BOT_TOKEN не найден в .env")
-        return
-
-    # Создаем приложение
+        raise ValueError("TELEGRAM_BOT_TOKEN not set")
+    
     app = ApplicationBuilder()\
         .token(TELEGRAM_BOT_TOKEN)\
+        .post_init(setup_database)\
         .build()
 
-    # Если нужно использовать AsyncIOScheduler
-    # scheduler = AsyncIOScheduler(timezone=pytz.utc)
-    # app.job_queue.scheduler = scheduler
-
-    # Регистрируем обработчики
+    # Регистрация обработчиков
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_messages))
     app.add_error_handler(error_handler)
+    
+    return app
 
-    logger.info("Бот успешно запущен.")
-    app.run_polling()
+def main():
+    try:
+        app = create_application()
+        logger.info("Бот запущен")
+        app.run_polling()
+    except Exception as e:
+        logger.critical(f"Bot failed: {e}")
 
 if __name__ == "__main__":
     main()

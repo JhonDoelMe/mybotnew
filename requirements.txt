@@ -4,3 +4,5 @@ apscheduler
 pytz
 requests
 beautifulsoup4
+telethon
+cachetools
