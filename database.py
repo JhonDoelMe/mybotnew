@@ -1,3 +1,4 @@
+# database.py
 import sqlite3
 from contextlib import contextmanager
 import logging
@@ -40,6 +41,8 @@ def setup_database():
                 city TEXT DEFAULT 'Kyiv',
                 currency_preference TEXT DEFAULT 'USD',
                 notify_air_alerts BOOLEAN DEFAULT 1,
+                oblast_uid TEXT,  -- Добавлено для области
+                location_uid TEXT,  -- Добавлено для конкретной локации
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             );
             
@@ -78,7 +81,7 @@ def get_user_settings(conn, user_id: int):
     """Получение настроек пользователя"""
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT city, currency_preference, notify_air_alerts
+        SELECT city, currency_preference, notify_air_alerts, oblast_uid, location_uid
         FROM user_settings 
         WHERE user_id = ?
     """, (user_id,))
@@ -86,7 +89,9 @@ def get_user_settings(conn, user_id: int):
     return dict(result) if result else {
         'city': 'Kyiv',
         'currency_preference': 'USD',
-        'notify_air_alerts': True
+        'notify_air_alerts': True,
+        'oblast_uid': None,
+        'location_uid': None
     }
 
 def update_user_setting(conn, user_id: int, setting: str, value):

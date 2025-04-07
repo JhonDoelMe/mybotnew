@@ -49,9 +49,15 @@ async def handle_air_raid_buttons(update: Update, context: CallbackContext):
             await air_raid.check_air_raid(update, context)
         elif text in ('Включить уведомления', 'Отключить уведомления'):
             await air_raid.toggle_notifications(update, context)
+        elif text == 'Выбрать область':
+            await air_raid.select_oblast(update, context)
+        elif text == 'Выбрать город':
+            await air_raid.select_location(update, context)
         elif text == 'Вернуться в главное меню':
             await update.message.reply_text("Главное меню", reply_markup=main_reply_markup)
             context.user_data.clear()
+        else:
+            await air_raid.handle_air_raid_input(update, context)
     except Exception as e:
         logger.error(f"Air raid button error: {e}")
         await update.message.reply_text("Ошибка обработки запроса")
