@@ -2,12 +2,20 @@
 import os
 import requests
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
 
 load_dotenv()
 OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
 BASE_URL = "http://api.openweathermap.org/data/2.5/weather?"
+
+# Клавиатура модуля "Погода"
+weather_keyboard = [['Текущая погода'], ['Вернуться в главное меню']]
+weather_reply_markup = ReplyKeyboardMarkup(weather_keyboard, resize_keyboard=True)
+
+def show_weather_menu(update: Update, context: CallbackContext) -> None:
+    """Отправляет меню погоды."""
+    update.message.reply_text("Выберите действие:", reply_markup=weather_reply_markup)
 
 def get_weather(update: Update, context: CallbackContext) -> None:
     """Получает и отправляет информацию о погоде."""
