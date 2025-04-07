@@ -1,4 +1,5 @@
 # main.py
+
 import os
 import logging
 import pytz
@@ -10,9 +11,11 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     filters,
+    JobQueue,
 )
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Импортируем функции из модулей
+# Импорт модулей (предполагается, что они у тебя есть в проекте)
 import weather
 import currency
 import air_raid
@@ -20,13 +23,13 @@ import tcc_news
 import database
 import button_handlers
 
-# Настраиваем логирование
+# Настройка логов
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Загружаем переменные окружения из .env
+# Загрузка токена
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -45,14 +48,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=main_reply_markup,
         )
     except Exception as e:
-        logger.error(f"Ошибка при обработке команды /start: {e}")
+        logger.error(f"Ошибка при /start: {e}")
         await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
 
 # Обработка главного меню
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     user = update.effective_user
-    logger.info(f"Пользователь {user.id} ({user.username}) нажал кнопку главного меню: {text}")
+    logger.info(f"Пользователь {user.id} выбрал {text} в главном меню.")
     try:
         if text == 'Погода':
             await weather.show_weather_menu(update, context)
@@ -69,16 +72,15 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         else:
             await update.message.reply_text("Не понимаю ваш запрос.")
     except Exception as e:
-        logger.error(f"Ошибка при обработке главного меню ({text}) от пользователя {user.id}: {e}")
-        await update.message.reply_text("Произошла ошибка при обработке запроса. Попробуйте позже.")
+        logger.error(f"Ошибка в главном меню: {e}")
+        await update.message.reply_text("Произошла ошибка при обработке запроса.")
 
-# Обработка кнопок внутри модулей
+# Обработка кнопок модулей
 async def handle_module_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     user = update.effective_user
     current_module = context.user_data.get('current_module')
-
-    logger.info(f"Пользователь {user.id} ({user.username}) нажал кнопку '{text}' в модуле '{current_module}'")
+    logger.info(f"Пользователь {user.id} нажал '{text}' в модуле '{current_module}'")
 
     try:
         if text == 'Вернуться в главное меню':
@@ -97,14 +99,10 @@ async def handle_module_buttons(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await update.message.reply_text("Не понимаю ваш запрос в этом разделе.")
     except Exception as e:
-        logger.error(f"Ошибка при обработке кнопки '{text}' в модуле '{current_module}' от пользователя {user.id}: {e}")
-        await update.message.reply_text("Произошла ошибка при обработке запроса. Попробуйте позже.")
+        logger.error(f"Ошибка при нажатии кнопки: {e}")
+        await update.message.reply_text("Произошла ошибка при обработке запроса.")
 
-# Обработчик ошибок
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(f"Произошла ошибка при обработке обновления: {context.error}")
-
-# Универсальный роутер сообщений
+# Универсальный роутер
 async def route_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_module = context.user_data.get('current_module')
     if current_module:
@@ -112,20 +110,34 @@ async def route_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await handle_main_menu(update, context)
 
-# Главная функция запуска
+# Обработка ошибок
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error(f"Ошибка во время обработки обновления: {context.error}")
+
+# Главная функция
 def main():
     if not TELEGRAM_BOT_TOKEN:
-        logger.critical("Ошибка: не найден TELEGRAM_BOT_TOKEN в .env")
+        logger.critical("Ошибка: TELEGRAM_BOT_TOKEN не найден в .env")
         return
 
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).timezone(pytz.utc).build()
+    # Инициализация планировщика с pytz
+    scheduler = AsyncIOScheduler(timezone=pytz.utc)
+    job_queue = JobQueue(scheduler=scheduler)
 
+    # Сборка приложения
+    app = ApplicationBuilder()\
+        .token(TELEGRAM_BOT_TOKEN)\
+        .job_queue(job_queue)\
+        .build()
+
+    # Обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_messages))
     app.add_error_handler(error_handler)
 
-    logger.info("Бот запущен.")
+    logger.info("Бот успешно запущен.")
     app.run_polling()
 
+# Запуск
 if __name__ == "__main__":
     main()
