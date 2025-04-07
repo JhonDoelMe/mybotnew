@@ -1,3 +1,4 @@
+import os
 import aiohttp
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
@@ -37,9 +38,12 @@ async def check_air_raid(update: Update, context: CallbackContext):
         return
     
     try:
-        headers = {"Authorization": ALERTS_API_TOKEN}
+        params = {"token": ALERTS_API_TOKEN}  # Токен передается как параметр
         async with aiohttp.ClientSession() as session:
-            async with session.get(ALERTS_API_URL, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+            async with session.get(ALERTS_API_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 401:
+                    await update.message.reply_text("Ошибка: Неверный или просроченный API-токен для alerts.in.ua")
+                    return
                 response.raise_for_status()
                 alerts = await response.json()
         

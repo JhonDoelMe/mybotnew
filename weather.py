@@ -1,6 +1,7 @@
+import os
 import aiohttp
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import CallbackContext
+from telegram.ext import CallbackContext # type: ignore
 from database import get_connection, get_user_settings, update_user_setting
 import logging
 from dotenv import load_dotenv
