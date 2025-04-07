@@ -52,6 +52,9 @@ def setup_database():
                 FOREIGN KEY (user_id) REFERENCES users(user_id),
                 UNIQUE(user_id, message_text)
             );
+            
+            CREATE INDEX IF NOT EXISTS idx_processed_news_user_message 
+            ON processed_news (user_id, message_text);
         """)
         conn.commit()
 
@@ -79,7 +82,8 @@ def get_user_settings(conn, user_id: int):
         FROM user_settings 
         WHERE user_id = ?
     """, (user_id,))
-    return cursor.fetchone() or {
+    result = cursor.fetchone()
+    return dict(result) if result else {
         'city': 'Kyiv',
         'currency_preference': 'USD',
         'notify_air_alerts': True

@@ -4,12 +4,10 @@ import weather
 import currency
 import air_raid
 import tcc_news
-from database import get_connection
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Главное меню (используется только для возврата)
 main_keyboard = [['Погода'], ['Курс валют'], ['Воздушная тревога'], ['Новости ТЦК']]
 main_reply_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
 
@@ -75,6 +73,9 @@ async def handle_module_buttons(update: Update, context: CallbackContext):
     """Главный обработчик кнопок модулей"""
     try:
         current_module = context.user_data.get('current_module')
+        if not current_module:
+            await update.message.reply_text("Выберите раздел", reply_markup=main_reply_markup)
+            return
         
         if current_module == 'weather':
             await handle_weather_buttons(update, context)

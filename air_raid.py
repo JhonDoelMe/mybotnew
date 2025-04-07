@@ -1,4 +1,4 @@
-import requests
+import aiohttp
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
 from database import get_connection, get_user_settings, update_user_setting
@@ -32,11 +32,16 @@ async def show_air_raid_menu(update: Update, context: CallbackContext):
 
 async def check_air_raid(update: Update, context: CallbackContext):
     """Проверить статус тревог"""
+    if not ALERTS_API_TOKEN:
+        await update.message.reply_text("Ошибка: API-токен для alerts.in.ua не настроен")
+        return
+    
     try:
         headers = {"Authorization": ALERTS_API_TOKEN}
-        response = requests.get(ALERTS_API_URL, headers=headers, timeout=10)
-        response.raise_for_status()
-        alerts = response.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(ALERTS_API_URL, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                alerts = await response.json()
         
         active_alerts = [region for region, status in alerts.items() if status['enabled']]
         

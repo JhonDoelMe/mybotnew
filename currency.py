@@ -1,4 +1,4 @@
-import requests
+import aiohttp
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
 from database import get_connection, get_user_settings, update_user_setting
@@ -32,13 +32,13 @@ async def get_exchange_rate(update: Update, context: CallbackContext):
     currency_code = update.message.text
     
     with get_connection() as conn:
-        # Обновляем предпочтения пользователя
         update_user_setting(conn, user_id, 'currency_preference', currency_code)
         
         try:
-            response = requests.get(NBU_EXCHANGE_RATE_URL, timeout=10)
-            response.raise_for_status()
-            rates = response.json()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(NBU_EXCHANGE_RATE_URL, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    response.raise_for_status()
+                    rates = await response.json()
             
             for rate in rates:
                 if rate['cc'] == currency_code:

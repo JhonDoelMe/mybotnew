@@ -1,4 +1,4 @@
-import requests
+import aiohttp
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
 from database import get_connection, get_user_settings, update_user_setting
@@ -31,6 +31,10 @@ async def show_weather_menu(update: Update, context: CallbackContext):
 
 async def get_weather(update: Update, context: CallbackContext):
     """Получить погоду для сохраненного города"""
+    if not OPENWEATHERMAP_API_KEY:
+        await update.message.reply_text("Ошибка: API-ключ OpenWeatherMap не настроен")
+        return
+    
     user_id = update.effective_user.id
     with get_connection() as conn:
         settings = get_user_settings(conn, user_id)
@@ -43,9 +47,10 @@ async def get_weather(update: Update, context: CallbackContext):
                 "units": "metric",
                 "lang": "ru"
             }
-            response = requests.get(BASE_URL, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    response.raise_for_status()
+                    data = await response.json()
 
             weather_info = {
                 "city": data["name"],
