@@ -3,7 +3,7 @@ import os
 import logging
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext, filters  # <--- filters с маленькой буквы
 
 # Импортируем функции из наших модулей
 import weather
@@ -80,7 +80,7 @@ def main():
     dispatcher.add_handler(CommandHandler("start", start))
 
     # Обработчик текстовых сообщений (для кнопок меню)
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_menu))
+    dispatcher.add_handler(MessageHandler(filters.text & ~filters.command, handle_menu)) # <--- filters с маленькой буквы
 
     # Обработчик ошибок
     dispatcher.add_error_handler(error_handler)
