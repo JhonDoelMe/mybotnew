@@ -6,6 +6,7 @@ instance/
 .idea/
 .vscode/
 config.json
+locations.json
 bot_database.db
 session.session
 session.session-journal
