@@ -5,7 +5,6 @@ from telegram.ext import CallbackContext
 from database import get_connection, get_user_settings, update_user_setting
 from dotenv import load_dotenv
 import logging
-import json
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -46,19 +45,19 @@ async def check_air_raid(update: Update, context: CallbackContext):
                     await update.message.reply_text("Ошибка: Неверный или просроченный API-токен для alerts.in.ua")
                     return
                 response.raise_for_status()
-                alerts = await response.json()
-                logger.info(f"API response: {alerts}")  # Для отладки
+                data = await response.json()
+                logger.info(f"API response: {data}")
         
-        # Проверяем тип данных
-        if isinstance(alerts, str):
-            await update.message.reply_text(f"Ошибка API: {alerts}")
-            return
-        elif not isinstance(alerts, list):
+        # Извлекаем список тревог из ключа "alerts"
+        alerts = data.get("alerts", [])
+        
+        # Проверяем, что alerts — это список
+        if not isinstance(alerts, list):
             await update.message.reply_text("Ошибка: Неверный формат данных от API")
             return
         
-        # Обрабатываем alerts как список словарей
-        active_alerts = [alert["region"] for alert in alerts if alert.get("enabled", False)]
+        # Фильтруем активные тревоги (finished_at is None)
+        active_alerts = [alert["location_title"] for alert in alerts if alert.get("finished_at") is None]
         
         if active_alerts:
             message = "🚨 Тревога в регионах:\n" + "\n".join(active_alerts)
