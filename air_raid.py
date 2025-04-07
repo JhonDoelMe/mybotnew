@@ -1,5 +1,6 @@
 import os
 import aiohttp
+import json
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
 from database import get_connection, get_user_settings, update_user_setting
@@ -25,6 +26,10 @@ OBLASTS = {
     "29": "Автономна Республіка Крим", "30": "м. Севастополь", "31": "м. Київ"
 }
 
+# Загружаем список локаций из JSON
+with open('locations.json', 'r', encoding='utf-8') as f:
+    LOCATIONS = json.load(f)
+
 async def show_air_raid_menu(update: Update, context: CallbackContext):
     """Показать меню тревог"""
     user_id = update.effective_user.id
@@ -33,7 +38,9 @@ async def show_air_raid_menu(update: Update, context: CallbackContext):
         
         status = "включены" if settings['notify_air_alerts'] else "выключены"
         oblast = OBLASTS.get(settings['oblast_uid'], "не выбрана")
-        location = settings['location_uid'] or "не выбран"
+        location_uid = settings['location_uid']
+        location = next((name for uid, name in LOCATIONS.get(settings['oblast_uid'], {}).items() 
+                        if uid == location_uid), "не выбран") if location_uid else "не выбран"
         
         keyboard = [
             ['Проверить тревоги'],
@@ -50,7 +57,7 @@ async def show_air_raid_menu(update: Update, context: CallbackContext):
             f"Локация: {location}",
             reply_markup=reply_markup
         )
-    return settings  # Возвращаем настройки для проверки
+    return settings
 
 async def select_oblast(update: Update, context: CallbackContext):
     """Показать список областей для выбора"""
@@ -71,32 +78,16 @@ async def select_location(update: Update, context: CallbackContext):
         await update.message.reply_text("Сначала выберите область!")
         return
     
-    try:
-        params = {"token": ALERTS_API_TOKEN}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(ALERTS_API_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                response.raise_for_status()
-                data = await response.json()
-        
-        alerts = data.get("alerts", [])
-        # Фильтруем локации по области
-        locations = sorted(set(
-            alert["location_title"] for alert in alerts 
-            if str(alert.get("location_oblast_uid")) == oblast_uid
-        ))
-        
-        if not locations:
-            await update.message.reply_text("Нет доступных локаций в этой области.")
-            return
-        
-        keyboard = [[location] for location in locations]
-        keyboard.append(['Вернуться в меню тревог'])
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("Выберите город или громаду:", reply_markup=reply_markup)
-        context.user_data['awaiting_location'] = True
-    except Exception as e:
-        logger.error(f"Location fetch error: {e}")
-        await update.message.reply_text("Ошибка загрузки локаций")
+    locations = LOCATIONS.get(oblast_uid, {})
+    if not locations:
+        await update.message.reply_text("Нет доступных локаций для этой области.")
+        return
+    
+    keyboard = [[name] for name in locations.values()]
+    keyboard.append(['Вернуться в меню тревог'])
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("Выберите город или громаду:", reply_markup=reply_markup)
+    context.user_data['awaiting_location'] = True
 
 async def check_air_raid(update: Update, context: CallbackContext):
     """Проверить статус тревог в выбранной локации"""
@@ -159,10 +150,10 @@ async def handle_air_raid_input(update: Update, context: CallbackContext):
             with get_connection() as conn:
                 update_user_setting(conn, user_id, 'oblast_uid', oblast_uid)
                 update_user_setting(conn, user_id, 'location_uid', None)  # Сбрасываем город
-                conn.commit()  # Явно фиксируем изменения
+                conn.commit()
             await update.message.reply_text(f"Выбрана область: {text}")
             del context.user_data['awaiting_oblast']
-            settings = await show_air_raid_menu(update, context)  # Показываем обновленное меню
+            settings = await show_air_raid_menu(update, context)
             logger.info(f"After oblast selection, settings: {settings}")
         elif text == 'Вернуться в меню тревог':
             del context.user_data['awaiting_oblast']
@@ -175,17 +166,13 @@ async def handle_air_raid_input(update: Update, context: CallbackContext):
             settings = get_user_settings(conn, user_id)
             oblast_uid = settings['oblast_uid']
         
-        params = {"token": ALERTS_API_TOKEN}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(ALERTS_API_URL, params=params) as response:
-                data = await response.json()
-                alerts = data.get("alerts", [])
-                location_uid = next((alert["location_uid"] for alert in alerts if alert["location_title"] == text and str(alert.get("location_oblast_uid")) == oblast_uid), None)
+        locations = LOCATIONS.get(oblast_uid, {})
+        location_uid = next((uid for uid, name in locations.items() if name == text), None)
         
         if location_uid:
             with get_connection() as conn:
                 update_user_setting(conn, user_id, 'location_uid', location_uid)
-                conn.commit()  # Явно фиксируем изменения
+                conn.commit()
             await update.message.reply_text(f"Выбрана локация: {text}")
             del context.user_data['awaiting_location']
             settings = await show_air_raid_menu(update, context)
