@@ -101,7 +101,7 @@ def main():
         return
 
     # Создаем Updater и передаем ему токен вашего бота
-    updater = Updater(TELEGRAM_BOT_TOKEN)
+    updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
 
     # Получаем диспетчера для регистрации обработчиков
     dispatcher = updater.dispatcher
