@@ -8,3 +8,4 @@ instance/
 config.json
 bot_database.db
 session.session
+session.session-journal
