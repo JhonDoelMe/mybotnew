@@ -1,55 +1,38 @@
+import os
 import aiohttp
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
-from database import get_connection, get_user_settings, update_user_setting
+from database import get_connection, get_user_settings
+from dotenv import load_dotenv
 import logging
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
-NBU_EXCHANGE_RATE_URL = "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?json"
+CURRENCY_API_URL = "https://api.exchangerate-api.com/v4/latest/UAH"
+CURRENCY_API_KEY = os.getenv("CURRENCY_API_KEY")
 
-async def show_currency_menu(update: Update, context: CallbackContext):
-    """Показать меню валют"""
+async def get_exchange_rate(update: Update, context: CallbackContext):
+    """Получить курс валют"""
     user_id = update.effective_user.id
     with get_connection() as conn:
         settings = get_user_settings(conn, user_id)
-        
-        keyboard = [
-            ['USD', 'EUR'],
-            ['Изменить валюту'],
-            ['Вернуться в главное меню']
-        ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        
-        await update.message.reply_text(
-            f"Текущая валюта: {settings['currency_preference']}",
-            reply_markup=reply_markup
-        )
-
-async def get_exchange_rate(update: Update, context: CallbackContext):
-    """Получить курс валюты"""
-    user_id = update.effective_user.id
-    currency_code = update.message.text
+        currency = update.message.text.split()[1] if len(update.message.text.split()) > 1 else settings['currency_preference']
     
-    with get_connection() as conn:
-        update_user_setting(conn, user_id, 'currency_preference', currency_code)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(CURRENCY_API_URL, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                data = await response.json()
         
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(NBU_EXCHANGE_RATE_URL, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    response.raise_for_status()
-                    rates = await response.json()
-            
-            for rate in rates:
-                if rate['cc'] == currency_code:
-                    message = (
-                        f"Курс {rate['cc']} к гривне на {rate['exchangedate']}:\n"
-                        f"1 {rate['cc']} = {rate['rate']} UAH"
-                    )
-                    await update.message.reply_text(message)
-                    return
-            
-            await update.message.reply_text("Валюта не найдена")
-        except Exception as e:
-            logger.error(f"Currency error: {e}")
-            await update.message.reply_text("Ошибка получения курса")
+        rate = data['rates'][currency]
+        await update.message.reply_text(f"Курс {currency} к UAH: {rate:.2f}")
+    except Exception as e:
+        logger.error(f"Currency error: {e}")
+        await update.message.reply_text("Ошибка получения курса валют")
+
+async def show_currency_menu(update: Update, context: CallbackContext):
+    """Показать меню валют"""
+    keyboard = [['💲 USD'], ['€ EUR'], ['🔄 Изменить валюту'], ['⬅️ Вернуться в главное меню']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("Меню валют", reply_markup=reply_markup)

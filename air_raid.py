@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 ALERTS_API_URL = "https://api.alerts.in.ua/v1/alerts/active.json"
 ALERTS_API_TOKEN = os.getenv("ALERTS_IN_UA_TOKEN")
 
-# Список областей
 OBLASTS = {
     "3": "Хмельницька область", "4": "Вінницька область", "5": "Рівненська область",
     "8": "Волинська область", "9": "Дніпропетровська область", "10": "Житомирська область",
@@ -26,9 +25,12 @@ OBLASTS = {
     "29": "Автономна Республіка Крим", "30": "м. Севастополь", "31": "м. Київ"
 }
 
-# Загружаем список локаций из JSON
-with open('locations.json', 'r', encoding='utf-8') as f:
-    LOCATIONS = json.load(f)
+try:
+    with open('locations.json', 'r', encoding='utf-8') as f:
+        LOCATIONS = json.load(f)
+except FileNotFoundError:
+    logger.error("Файл locations.json не найден!")
+    LOCATIONS = {}
 
 async def show_air_raid_menu(update: Update, context: CallbackContext):
     """Показать меню тревог"""
@@ -43,11 +45,11 @@ async def show_air_raid_menu(update: Update, context: CallbackContext):
                         if uid == location_uid), "не выбран") if location_uid else "не выбран"
         
         keyboard = [
-            ['Проверить тревоги'],
-            ['Выбрать область'],
-            ['Выбрать город'],
-            ['Отключить уведомления' if settings['notify_air_alerts'] else 'Включить уведомления'],
-            ['Вернуться в главное меню']
+            ['🔍 Проверить тревоги'],
+            ['🌍 Выбрать область'],
+            ['🏘️ Выбрать город'],
+            ['🔔 Включить уведомления' if not settings['notify_air_alerts'] else '🔕 Отключить уведомления'],
+            ['⬅️ Вернуться в главное меню']
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         
@@ -62,7 +64,7 @@ async def show_air_raid_menu(update: Update, context: CallbackContext):
 async def select_oblast(update: Update, context: CallbackContext):
     """Показать список областей для выбора"""
     keyboard = [[oblast] for oblast in OBLASTS.values()]
-    keyboard.append(['Вернуться в меню тревог'])
+    keyboard.append(['⬅️ Вернуться в меню тревог'])
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("Выберите область:", reply_markup=reply_markup)
     context.user_data['awaiting_oblast'] = True
@@ -84,7 +86,7 @@ async def select_location(update: Update, context: CallbackContext):
         return
     
     keyboard = [[name] for name in locations.values()]
-    keyboard.append(['Вернуться в меню тревог'])
+    keyboard.append(['⬅️ Вернуться в меню тревог'])
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("Выберите город или громаду:", reply_markup=reply_markup)
     context.user_data['awaiting_location'] = True
@@ -111,9 +113,9 @@ async def check_air_raid(update: Update, context: CallbackContext):
                 data = await response.json()
         
         alerts = data.get("alerts", [])
-        if not location_uid:  # Если локация не выбрана, показываем все активные тревоги
+        if not location_uid:
             active_alerts = [alert["location_title"] for alert in alerts if alert.get("finished_at") is None]
-        else:  # Фильтруем по выбранной локации
+        else:
             active_alerts = [alert["location_title"] for alert in alerts 
                             if alert.get("finished_at") is None and alert.get("location_uid") == location_uid]
         
@@ -149,13 +151,13 @@ async def handle_air_raid_input(update: Update, context: CallbackContext):
         if oblast_uid:
             with get_connection() as conn:
                 update_user_setting(conn, user_id, 'oblast_uid', oblast_uid)
-                update_user_setting(conn, user_id, 'location_uid', None)  # Сбрасываем город
+                update_user_setting(conn, user_id, 'location_uid', None)
                 conn.commit()
             await update.message.reply_text(f"Выбрана область: {text}")
             del context.user_data['awaiting_oblast']
             settings = await show_air_raid_menu(update, context)
             logger.info(f"After oblast selection, settings: {settings}")
-        elif text == 'Вернуться в меню тревог':
+        elif text == '⬅️ Вернуться в меню тревог':
             del context.user_data['awaiting_oblast']
             await show_air_raid_menu(update, context)
         else:
@@ -177,22 +179,22 @@ async def handle_air_raid_input(update: Update, context: CallbackContext):
             del context.user_data['awaiting_location']
             settings = await show_air_raid_menu(update, context)
             logger.info(f"After location selection, settings: {settings}")
-        elif text == 'Вернуться в меню тревог':
+        elif text == '⬅️ Вернуться в меню тревог':
             del context.user_data['awaiting_location']
             await show_air_raid_menu(update, context)
         else:
             await update.message.reply_text("Выберите локацию из списка!")
     
     else:
-        if text == 'Проверить тревоги':
+        if text == '🔍 Проверить тревоги':
             await check_air_raid(update, context)
-        elif text == 'Выбрать область':
+        elif text == '🌍 Выбрать область':
             await select_oblast(update, context)
-        elif text == 'Выбрать город':
+        elif text == '🏘️ Выбрать город':
             await select_location(update, context)
-        elif text in ('Включить уведомления', 'Отключить уведомления'):
+        elif text in ('🔔 Включить уведомления', '🔕 Отключить уведомления'):
             await toggle_notifications(update, context)
-        elif text == 'Вернуться в главное меню':
+        elif text == '⬅️ Вернуться в главное меню':
             from button_handlers import main_reply_markup
             await update.message.reply_text("Главное меню", reply_markup=main_reply_markup)
             context.user_data.clear()
