@@ -7,3 +7,4 @@ instance/
 .vscode/
 config.json
 bot_database.db
+session.session
