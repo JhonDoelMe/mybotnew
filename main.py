@@ -10,8 +10,8 @@ import weather
 import currency
 import air_raid
 import tcc_news
-import database  # Пока не используется, но будет нужен
-import button_handlers  # Создадим этот файл позже
+import database
+import button_handlers
 
 # Настраиваем логирование
 logging.basicConfig(
@@ -101,7 +101,7 @@ def main():
         return
 
     # Создаем Updater и передаем ему токен вашего бота
-    updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
+    updater = Updater(TELEGRAM_BOT_TOKEN)
 
     # Получаем диспетчера для регистрации обработчиков
     dispatcher = updater.dispatcher
