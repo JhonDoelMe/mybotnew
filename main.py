@@ -1,124 +1,83 @@
 import os
 import logging
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from button_handlers import main_reply_markup, handle_module_buttons
+from weather import show_weather_menu, get_weather, handle_city_change
+from currency import show_currency_menu, get_exchange_rate
+from air_raid import show_air_raid_menu, check_air_raid, toggle_notifications, select_oblast, select_location, handle_air_raid_input
 
-import weather
-import currency
-import air_raid
-import tcc_news
-import button_handlers
-from database import get_connection, get_or_create_user, setup_database
+# Загрузка переменных окружения из .env
+load_dotenv()
 
+# Настройка логирования
 logging.basicConfig(
+    filename='bot.log',
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-load_dotenv()
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-main_keyboard = [['Погода'], ['Курс валют'], ['Воздушная тревога'], ['Новости ТЦК']]
-main_reply_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: CallbackContext):
     """Обработчик команды /start"""
     user = update.effective_user
-    with get_connection() as conn:
-        get_or_create_user(conn, {
-            'id': user.id,
-            'username': user.username,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-            'language_code': user.language_code
-        })
-    
-    context.user_data.clear()
     await update.message.reply_text(
         f"Привет, {user.first_name}! Выберите раздел:",
-        reply_markup=main_reply_markup
+        reply_markup=main_reply_markup  # Используем меню с эмодзи из button_handlers
     )
 
-async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка главного меню"""
+async def handle_message(update: Update, context: CallbackContext):
+    """Обработчик текстовых сообщений"""
     text = update.message.text
-    try:
-        if text == 'Погода':
-            await weather.show_weather_menu(update, context)
-            context.user_data['current_module'] = 'weather'
-        elif text == 'Курс валют':
-            await currency.show_currency_menu(update, context)
-            context.user_data['current_module'] = 'currency'
-        elif text == 'Воздушная тревога':
-            await air_raid.show_air_raid_menu(update, context)
-            context.user_data['current_module'] = 'air_raid'
-        elif text == 'Новости ТЦК':
-            await tcc_news.show_tcc_news_menu(update, context)
-            context.user_data['current_module'] = 'tcc_news'
-        else:
-            await update.message.reply_text("Выберите раздел:", reply_markup=main_reply_markup)
-    except Exception as e:
-        logger.error(f"Menu error: {e}")
-        await update.message.reply_text("Ошибка обработки команды")
+    current_module = context.user_data.get('current_module')
 
-async def route_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Маршрутизатор сообщений"""
-    user_id = update.effective_user.id
-    
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-        if not cursor.fetchone():
-            await start(update, context)
-            return
-    
-    if 'awaiting_city' in context.user_data:
-        await weather.handle_city_change(update, context)
-    elif 'current_module' in context.user_data:
-        await button_handlers.handle_module_buttons(update, context)
+    # Главное меню
+    if text == '🌤️ Погода' or text == 'Погода':
+        context.user_data['current_module'] = 'weather'
+        await show_weather_menu(update, context)
+    elif text == '💵 Курс валют' or text == 'Курс валют':
+        context.user_data['current_module'] = 'currency'
+        await show_currency_menu(update, context)
+    elif text == '🚨 Воздушная тревога' or text == 'Воздушная тревога':
+        context.user_data['current_module'] = 'air_raid'
+        await show_air_raid_menu(update, context)
+    # Игнорируем "Новости ТЦК", если пользователь ввел вручную
+    elif text == 'Новости ТЦК':
+        await update.message.reply_text("Этот раздел временно отключен.", reply_markup=main_reply_markup)
+    # Обработка подменю
+    elif current_module:
+        await handle_module_buttons(update, context)
     else:
-        await handle_main_menu(update, context)
+        await update.message.reply_text("Выберите раздел:", reply_markup=main_reply_markup)
 
-async def post_init(application):
-    """Инициализация при запуске"""
-    setup_database()
-    logger.info("Database initialized")
-
-def create_application():
-    """Создание приложения бота"""
-    if not TELEGRAM_BOT_TOKEN:
-        raise ValueError("TELEGRAM_BOT_TOKEN not set in environment variables")
-    
-    app = ApplicationBuilder()\
-        .token(TELEGRAM_BOT_TOKEN)\
-        .post_init(post_init)\
-        .build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_messages))
-    
-    return app
+async def error_handler(update: Update, context: CallbackContext):
+    """Обработчик ошибок"""
+    logger.error(f"Ошибка: {context.error}")
+    try:
+        await update.message.reply_text("Произошла ошибка. Попробуйте снова.", reply_markup=main_reply_markup)
+    except Exception as e:
+        logger.error(f"Ошибка при отправке сообщения об ошибке: {e}")
 
 def main():
-    """Точка входа"""
-    try:
-        app = create_application()
-        logger.info("Bot started")
-        app.run_polling()
-    except Exception as e:
-        logger.critical(f"Bot failed: {e}")
+    """Запуск бота"""
+    # Получаем токен из .env
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        logger.error("TELEGRAM_BOT_TOKEN не найден в .env")
+        return
 
-if __name__ == "__main__":
+    # Создаем приложение
+    application = Application.builder().token(token).build()
+
+    # Добавляем обработчики
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_error_handler(error_handler)
+
+    # Запускаем бота
+    logger.info("Бот запущен")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == '__main__':
     main()
