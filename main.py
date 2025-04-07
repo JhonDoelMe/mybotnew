@@ -120,15 +120,14 @@ def main():
         logger.critical("Ошибка: TELEGRAM_BOT_TOKEN не найден в .env")
         return
 
-    # Инициализация планировщика с pytz
-    scheduler = AsyncIOScheduler(timezone=pytz.utc)
-    job_queue = JobQueue(scheduler=scheduler)
-
-    # Сборка приложения
+    # Сборка приложения (JobQueue создаётся автоматически)
     app = ApplicationBuilder()\
         .token(TELEGRAM_BOT_TOKEN)\
-        .job_queue(job_queue)\
         .build()
+
+    # Если нужен кастомный планировщик:
+    # scheduler = AsyncIOScheduler(timezone=pytz.utc)
+    # app.job_queue.scheduler = scheduler
 
     # Обработчики
     app.add_handler(CommandHandler("start", start))
@@ -141,4 +140,3 @@ def main():
 # Запуск
 if __name__ == "__main__":
     main()
-    
