@@ -75,13 +75,25 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Ошибка обработки команды")
 
 async def route_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'current_module' in context.user_data:
-        await button_handlers.handle_module_buttons(update, context)
-    else:
-        await handle_main_menu(update, context)
+    try:
+        if 'awaiting_city' in context.user_data:
+            await weather.handle_city_change(update, context)
+        elif 'current_module' in context.user_data:
+            await button_handlers.handle_module_buttons(update, context)
+        else:
+            await handle_main_menu(update, context)
+    except Exception as e:
+        logger.error(f"Routing error: {e}")
+        await update.message.reply_text("Произошла ошибка маршрутизации")
+        await start(update, context)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(f"Update {update} caused error: {context.error}")
+
+async def post_init(application):
+    """Асинхронная функция инициализации"""
+    logger.info("Initializing database...")
+    setup_database()
 
 def create_application():
     """Фабрика приложения бота"""
@@ -90,7 +102,7 @@ def create_application():
     
     app = ApplicationBuilder()\
         .token(TELEGRAM_BOT_TOKEN)\
-        .post_init(setup_database)\
+        .post_init(post_init)\
         .build()
 
     # Регистрация обработчиков
