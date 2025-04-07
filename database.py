@@ -98,12 +98,17 @@ def update_user_setting(conn, user_id: int, setting: str, value):
     """Обновление настроек пользователя"""
     cursor = conn.cursor()
     cursor.execute(f"""
-        INSERT OR REPLACE INTO user_settings 
-        (user_id, {setting}) 
-        VALUES (?, ?)
-    """, (user_id, value))
+        UPDATE user_settings 
+        SET {setting} = ? 
+        WHERE user_id = ?
+    """, (value, user_id))
+    if cursor.rowcount == 0:  # Если записи нет, создаем новую
+        cursor.execute(f"""
+            INSERT INTO user_settings (user_id, {setting})
+            VALUES (?, ?)
+        """, (user_id, value))
     conn.commit()
-
+    
 def log_news_processed(conn, user_id: int, channel_id: str, message_text: str):
     """Логирование обработанных новостей"""
     cursor = conn.cursor()

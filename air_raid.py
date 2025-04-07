@@ -50,6 +50,7 @@ async def show_air_raid_menu(update: Update, context: CallbackContext):
             f"Локация: {location}",
             reply_markup=reply_markup
         )
+    return settings  # Возвращаем настройки для проверки
 
 async def select_oblast(update: Update, context: CallbackContext):
     """Показать список областей для выбора"""
@@ -158,9 +159,11 @@ async def handle_air_raid_input(update: Update, context: CallbackContext):
             with get_connection() as conn:
                 update_user_setting(conn, user_id, 'oblast_uid', oblast_uid)
                 update_user_setting(conn, user_id, 'location_uid', None)  # Сбрасываем город
+                conn.commit()  # Явно фиксируем изменения
             await update.message.reply_text(f"Выбрана область: {text}")
             del context.user_data['awaiting_oblast']
-            await show_air_raid_menu(update, context)
+            settings = await show_air_raid_menu(update, context)  # Показываем обновленное меню
+            logger.info(f"After oblast selection, settings: {settings}")
         elif text == 'Вернуться в меню тревог':
             del context.user_data['awaiting_oblast']
             await show_air_raid_menu(update, context)
@@ -182,9 +185,11 @@ async def handle_air_raid_input(update: Update, context: CallbackContext):
         if location_uid:
             with get_connection() as conn:
                 update_user_setting(conn, user_id, 'location_uid', location_uid)
+                conn.commit()  # Явно фиксируем изменения
             await update.message.reply_text(f"Выбрана локация: {text}")
             del context.user_data['awaiting_location']
-            await show_air_raid_menu(update, context)
+            settings = await show_air_raid_menu(update, context)
+            logger.info(f"After location selection, settings: {settings}")
         elif text == 'Вернуться в меню тревог':
             del context.user_data['awaiting_location']
             await show_air_raid_menu(update, context)
