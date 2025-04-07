@@ -6,3 +6,4 @@ instance/
 .idea/
 .vscode/
 config.json
+bot_database.db

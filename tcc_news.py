@@ -3,11 +3,11 @@ import json
 import os
 from datetime import datetime, timedelta
 from telethon import TelegramClient
-from telegram.tl.functions.messages import GetHistoryRequest
+from telethon.tl.functions.messages import GetHistoryRequest
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import CallbackContext
 from dotenv import load_dotenv
-import database  # Импортируем модуль database
+import database
 
 load_dotenv()
 TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID")
@@ -50,7 +50,7 @@ def mark_news_as_processed(conn, channel_id, message_text):
 def get_tcc_news(update: Update, context: CallbackContext) -> None:
     """Получает и отправляет последние новости ТЦК из каналов за последние три дня."""
     async def main():
-        conn = database.get_connection()  # Получаем соединение с базой данных
+        conn = database.get_connection()
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
@@ -86,8 +86,8 @@ def get_tcc_news(update: Update, context: CallbackContext) -> None:
                             for keyword in keywords:
                                 if keyword.lower() in message.text.lower() and not is_news_processed(conn, channel_id, message.text):
                                     found_news.append(f"Источник: {channel_id}\n{message.text}\n\n")
-                                    mark_news_as_processed(conn, channel_id, message.text) # Помечаем новость как обработанную
-                                    break # Переходим к следующему сообщению, если ключевое слово найдено
+                                    mark_news_as_processed(conn, channel_id, message.text)
+                                    break
 
             await client.disconnect()
 
@@ -108,7 +108,7 @@ def get_tcc_news(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             update.message.reply_text(f"Произошла непредвиденная ошибка при получении новостей ТЦК: {e}")
         finally:
-            database.close_connection(conn) # Закрываем соединение с базой данных
+            database.close_connection(conn)
 
     import asyncio
     asyncio.run(main())
