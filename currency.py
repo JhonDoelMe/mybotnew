@@ -5,7 +5,8 @@ from datetime import datetime
 import requests
 from telegram import Update
 from telegram.ext import ContextTypes
-from telegram.constants import ParseMode  # Добавляем импорт ParseMode
+from telegram.constants import ParseMode
+from telegram import helpers
 
 import config
 import database as db
@@ -16,7 +17,7 @@ CURRENCY_API_URL = "https://api.exchangerate-api.com/v4/latest/UAH"
 CURRENCY_CACHE: Dict[str, dict] = {}
 
 async def get_currency_rates(force_update: bool = False) -> Optional[Dict[str, float]]:
-    if not force_update and CURRENCY_CACHE and (datetime.now() - CURRENCY_CACHE['timestamp']).total_seconds() < 86400:  # 24 hours cache
+    if not force_update and CURRENCY_CACHE and (datetime.now() - CURRENCY_CACHE['timestamp']).total_seconds() < 86400:
         logger.info("Returning cached currency rates.")
         return CURRENCY_CACHE['rates']
 
@@ -39,11 +40,11 @@ async def get_currency_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     user_currencies = db.get_user_currencies(user_id) or ['USD', 'EUR']
-    message = "💵 *Курси валют (UAH):*\n\n"
+    message = "💵 *Курси валют \\(UAH\\):*\n\n"  # Экранируем скобки
     for code in user_currencies:
         if code in rates:
             rate = rates[code]
-            message += f"{code}: {1/rate:.2f} UAH\n"
+            message += f"{helpers.escape_markdown(code, version=2)}: {1/rate:.2f} UAH\n"
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
 def add_currency_code(user_id: int, code: str) -> bool:

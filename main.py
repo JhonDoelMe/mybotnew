@@ -48,13 +48,10 @@ BOT_TOKEN = config.cfg.get('BOT_TOKEN')
 ADMIN_IDS = [int(id_str) for id_str in config.cfg.get('ADMIN_IDS', '').split(',') if id_str.strip().isdigit()]
 AIR_RAID_CHECK_INTERVAL = config.cfg.get('AIR_RAID_CHECK_INTERVAL', 90)
 
-# Кнопки основного меню
 MAIN_MENU = [
     ["🔔 Тревога", "💵 Курс валют"],
     ["☀️ Погода"]
 ]
-
-# Кнопки подменю
 WEATHER_MENU = [
     ["🌆 Изменить город", "🔄 Обновить прогноз"],
     ["⬅️ Назад"]
@@ -79,7 +76,11 @@ def require_message(func):
         if not update.message:
             logger.warning(f"{func.__name__} called without message")
             return
-        return await func(update, context, *args, **kwargs)
+        try:
+            return await func(update, context, *args, **kwargs)
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ Помилка: {str(e)}")
+            raise
     return wrapper
 
 @require_message
@@ -97,12 +98,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Я твій помічник\\. Обери дію з меню нижче:"
     )
 
-    try:
-        await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
-    except TelegramError as e:
-        logger.error(f"Error sending start message: {e}")
-        plain_message = welcome_message.replace('\\!', '!').replace('\\.', '.')
-        await update.message.reply_text(plain_message, reply_markup=reply_markup)
+    await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
 
 @require_message
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -123,12 +119,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "`/status` \\- Статус підписки\\."
     )
 
-    try:
-        await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN_V2)
-    except TelegramError as e:
-        logger.error(f"Error sending help message: {e}")
-        plain_text = help_text.replace('\\*', '*').replace('\\.', '.')
-        await update.message.reply_text(plain_text)
+    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN_V2)
 
 async def resolve_region_id(region_name: str) -> Optional[str]:
     alerts = await air_raid.get_air_raid_status()
@@ -226,12 +217,8 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Доступ заборонено.")
         return
 
-    try:
-        sub_count = len(set(u for u, _ in db.get_subscribers()))
-        await update.message.reply_text(f"Кількість підписників: {sub_count}")
-    except Exception as e:
-        logger.error(f"Error in admin command: {e}")
-        await update.message.reply_text("Помилка отримання даних.")
+    sub_count = len(set(u for u, _ in db.get_subscribers()))
+    await update.message.reply_text(f"Кількість підписників: {sub_count}")
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
@@ -241,84 +228,82 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id if update.effective_user else "Unknown ID"
     logger.info(f"Received text from {user_id}: '{text}'")
 
-    # Главное меню
-    if text == "🔔 Тревога":
-        context.user_data['menu'] = 'air_raid'
-        reply_markup = ReplyKeyboardMarkup(AIR_RAID_MENU, resize_keyboard=True)
-        await update.message.reply_text("Меню тривог:", reply_markup=reply_markup)
-    elif text == "💵 Курс валют":
-        context.user_data['menu'] = 'currency'
-        reply_markup = ReplyKeyboardMarkup(CURRENCY_MENU, resize_keyboard=True)
-        await update.message.reply_text("Меню валют:", reply_markup=reply_markup)
-        await currency.get_currency_command(update, context)
-    elif text == "☀️ Погода":
-        context.user_data['menu'] = 'weather'
-        reply_markup = ReplyKeyboardMarkup(WEATHER_MENU, resize_keyboard=True)
-        await update.message.reply_text("Меню погоди:", reply_markup=reply_markup)
-        await weather.get_weather_command(update, context)
-
-    # Подменю Погода
-    elif context.user_data.get('menu') == 'weather':
-        if text == "🌆 Изменить город":
-            await update.message.reply_text("Введіть назву міста:")
-            context.user_data['awaiting_city'] = True
-        elif text == "🔄 Обновить прогноз":
-            context.args = [context.user_data.get('city', 'Kyiv')]
-            await weather.get_weather_command(update, context, force_update=True)
-        elif text == "⬅️ Назад":
-            context.user_data['menu'] = 'main'
-            reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
-            await update.message.reply_text("Повернення до основного меню:", reply_markup=reply_markup)
-
-    # Подменю Курс валют
-    elif context.user_data.get('menu') == 'currency':
-        if text == "🔄 Обновить курс":
-            await currency.get_currency_command(update, context, force_update=True)
-        elif text == "➕ Добавить код валюты":
-            await update.message.reply_text("Введіть код валюти (наприклад, USD, EUR):")
-            context.user_data['awaiting_currency'] = True
-        elif text == "⬅️ Назад":
-            context.user_data['menu'] = 'main'
-            reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
-            await update.message.reply_text("Повернення до основного меню:", reply_markup=reply_markup)
-
-    # Подменю Тревога
-    elif context.user_data.get('menu') == 'air_raid':
-        if text == "🔄 Обновить статус":
-            await air_raid.alerts_command(update, context)
-        elif text == "🌍 Выбрать область":
-            alerts = await air_raid.get_air_raid_status()
-            if not alerts:
-                await update.message.reply_text("Не вдалося завантажити список регіонів.")
-                return
-            keyboard = [
-                [InlineKeyboardButton(region.get('regionName'), callback_data=f"region:{region.get('regionId')}")]
-                for region in sorted(alerts, key=lambda x: x.get('regionName', ''))
-            ]
-            keyboard.append([InlineKeyboardButton("Всі регіони", callback_data="region:all")])
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text("Оберіть область:", reply_markup=reply_markup)
-        elif text == "⬅️ Назад":
-            context.user_data['menu'] = 'main'
-            reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
-            await update.message.reply_text("Повернення до основного меню:", reply_markup=reply_markup)
-
-    # Обработка ввода города
-    elif context.user_data.get('awaiting_city'):
-        context.user_data['city'] = text
-        context.user_data['awaiting_city'] = False
-        context.args = [text]
-        await weather.get_weather_command(update, context)
-    
-    # Обработка ввода валюты
-    elif context.user_data.get('awaiting_currency'):
-        currency_code = text.upper()
-        context.user_data['awaiting_currency'] = False
-        if currency.add_currency_code(user_id, currency_code):
-            await update.message.reply_text(f"Додано валюту {currency_code}.")
+    try:
+        if text == "🔔 Тревога":
+            context.user_data['menu'] = 'air_raid'
+            reply_markup = ReplyKeyboardMarkup(AIR_RAID_MENU, resize_keyboard=True)
+            await update.message.reply_text("Меню тривог:", reply_markup=reply_markup)
+        elif text == "💵 Курс валют":
+            context.user_data['menu'] = 'currency'
+            reply_markup = ReplyKeyboardMarkup(CURRENCY_MENU, resize_keyboard=True)
+            await update.message.reply_text("Меню валют:", reply_markup=reply_markup)
             await currency.get_currency_command(update, context)
-        else:
-            await update.message.reply_text("Невірний код валюти або помилка додавання.")
+        elif text == "☀️ Погода":
+            context.user_data['menu'] = 'weather'
+            reply_markup = ReplyKeyboardMarkup(WEATHER_MENU, resize_keyboard=True)
+            await update.message.reply_text("Меню погоди:", reply_markup=reply_markup)
+            await weather.get_weather_command(update, context)
+
+        elif context.user_data.get('menu') == 'weather':
+            if text == "🌆 Изменить город":
+                await update.message.reply_text("Введіть назву міста:")
+                context.user_data['awaiting_city'] = True
+            elif text == "🔄 Обновить прогноз":
+                context.args = [context.user_data.get('city', 'Kyiv')]
+                await weather.get_weather_command(update, context, force_update=True)
+            elif text == "⬅️ Назад":
+                context.user_data['menu'] = 'main'
+                reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
+                await update.message.reply_text("Повернення до основного меню:", reply_markup=reply_markup)
+
+        elif context.user_data.get('menu') == 'currency':
+            if text == "🔄 Обновить курс":
+                await currency.get_currency_command(update, context, force_update=True)
+            elif text == "➕ Добавить код валюты":
+                await update.message.reply_text("Введіть код валюти \\(наприклад, USD, EUR\\):", parse_mode=ParseMode.MARKDOWN_V2)
+                context.user_data['awaiting_currency'] = True
+            elif text == "⬅️ Назад":
+                context.user_data['menu'] = 'main'
+                reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
+                await update.message.reply_text("Повернення до основного меню:", reply_markup=reply_markup)
+
+        elif context.user_data.get('menu') == 'air_raid':
+            if text == "🔄 Обновить статус":
+                await air_raid.alerts_command(update, context)
+            elif text == "🌍 Выбрать область":
+                alerts = await air_raid.get_air_raid_status()
+                if not alerts:
+                    await update.message.reply_text("Не вдалося завантажити список регіонів.")
+                    return
+                keyboard = [
+                    [InlineKeyboardButton(region.get('regionName'), callback_data=f"region:{region.get('regionId')}")]
+                    for region in sorted(alerts, key=lambda x: x.get('regionName', ''))
+                ]
+                keyboard.append([InlineKeyboardButton("Всі регіони", callback_data="region:all")])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text("Оберіть область:", reply_markup=reply_markup)
+            elif text == "⬅️ Назад":
+                context.user_data['menu'] = 'main'
+                reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
+                await update.message.reply_text("Повернення до основного меню:", reply_markup=reply_markup)
+
+        elif context.user_data.get('awaiting_city'):
+            context.user_data['city'] = text
+            context.user_data['awaiting_city'] = False
+            context.args = [text]
+            await weather.get_weather_command(update, context)
+        
+        elif context.user_data.get('awaiting_currency'):
+            currency_code = text.upper()
+            context.user_data['awaiting_currency'] = False
+            if currency.add_currency_code(user_id, currency_code):
+                await update.message.reply_text(f"Додано валюту {currency_code}.")
+                await currency.get_currency_command(update, context)
+            else:
+                await update.message.reply_text("Невірний код валюти або помилка додавання.")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Помилка: {str(e)}")
+        raise
 
 async def button_callback(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -326,31 +311,35 @@ async def button_callback(update: telegram.Update, context: ContextTypes.DEFAULT
     user_id = query.from_user.id
     action, data = query.data.split(':')
 
-    if action == "subscribe":
-        region_id = None if data == 'all' else data
-        if db.is_subscribed(user_id, region_id):
-            await query.message.reply_text("Ви вже підписані на цей регіон.")
-            return
-        if db.add_subscriber(user_id, region_id):
+    try:
+        if action == "subscribe":
+            region_id = None if data == 'all' else data
+            if db.is_subscribed(user_id, region_id):
+                await query.message.reply_text("Ви вже підписані на цей регіон.")
+                return
+            if db.add_subscriber(user_id, region_id):
+                alerts = await air_raid.get_air_raid_status()
+                region_name = next(
+                    (r.get('regionName') for r in alerts if r.get('regionId') == region_id),
+                    'всі регіони'
+                ) if alerts else 'всі регіони'
+                await query.message.reply_text(f"Підписано на {region_name}.")
+            else:
+                await query.message.reply_text("Помилка підписки.")
+        
+        elif action == "region":
+            region_id = None if data == 'all' else data
+            context.user_data['selected_region'] = region_id
             alerts = await air_raid.get_air_raid_status()
             region_name = next(
                 (r.get('regionName') for r in alerts if r.get('regionId') == region_id),
                 'всі регіони'
             ) if alerts else 'всі регіони'
-            await query.message.reply_text(f"Підписано на {region_name}.")
-        else:
-            await query.message.reply_text("Помилка підписки.")
-    
-    elif action == "region":
-        region_id = None if data == 'all' else data
-        context.user_data['selected_region'] = region_id
-        alerts = await air_raid.get_air_raid_status()
-        region_name = next(
-            (r.get('regionName') for r in alerts if r.get('regionId') == region_id),
-            'всі регіони'
-        ) if alerts else 'всі регіони'
-        await query.message.reply_text(f"Обрано область: {region_name}. Тривоги будуть відображатися лише для неї.")
-        await air_raid.alerts_command(update, context)
+            await query.message.reply_text(f"Обрано область: {region_name}. Тривоги будуть відображатися лише для неї.")
+            await air_raid.alerts_command(update, context)
+    except Exception as e:
+        await query.message.reply_text(f"⚠️ Помилка: {str(e)}")
+        raise
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.error is None:
@@ -361,34 +350,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
     tb_string = "".join(tb_list)
 
-    update_str = str(update)
-    update_details = update.to_json() if isinstance(update, Update) else str(update)
-    chat_id = update.effective_chat.id if isinstance(update, Update) and update.effective_chat else "N/A"
-    user_id = update.effective_user.id if isinstance(update, Update) and update.effective_user else "N/A"
-
-    log_message = (
-        f"Error: {context.error}\n"
-        f"User ID: {user_id}\n"
-        f"Chat ID: {chat_id}\n"
-        f"Traceback:\n{tb_string}\n"
-        f"Update:\n{update_details}"
-    )
-    logger.error(log_message)
-
-    for admin_id in ADMIN_IDS:
-        admin_message = (
-            f"⚠️ *Bot Error*\n\n"
-            f"*Error*: `{helpers.escape_markdown(str(context.error), version=2)}`\n"
-            f"*User*: `{user_id}`, *Chat*: `{chat_id}`\n"
-            f"*Traceback*:\n```{''.join(tb_list[-3:])}\n```"
-        )
-        if len(admin_message) > 4096:
-            admin_message = admin_message[:4090] + "\\.\\.\\."
-
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=admin_message, parse_mode=ParseMode.MARKDOWN_V2)
-        except TelegramError as e:
-            logger.error(f"Failed to notify admin {admin_id}: {e}")
+    chat_id = update.effective_chat.id if isinstance(update, Update) and update.effective_chat else None
+    if chat_id:
+        error_message = f"⚠️ Помилка: {str(context.error)}"
+        await context.bot.send_message(chat_id=chat_id, text=error_message)
 
 async def cleanup_subscribers(context: ContextTypes.DEFAULT_TYPE) -> None:
     subscribers = db.get_subscribers()
@@ -422,7 +387,7 @@ def main():
                 interval = 90
                 logger.warning("Invalid AIR_RAID_CHECK_INTERVAL. Using default: 90.")
             job_queue.run_repeating(air_raid.check_air_raid_status, interval=interval, first=10)
-            job_queue.run_repeating(cleanup_subscribers, interval=604800, first=86400)  # Weekly cleanup
+            job_queue.run_repeating(cleanup_subscribers, interval=604800, first=86400)
         except (ValueError, TypeError):
             logger.error("Invalid AIR_RAID_CHECK_INTERVAL. Using default: 90.")
             job_queue.run_repeating(air_raid.check_air_raid_status, interval=90, first=10)

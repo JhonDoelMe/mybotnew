@@ -22,7 +22,7 @@ async def get_weather(city: str, force_update: bool = False) -> Optional[str]:
     cache_key = city.lower()
     if not force_update and cache_key in WEATHER_CACHE:
         cached = WEATHER_CACHE[cache_key]
-        if (datetime.now() - cached['timestamp']).total_seconds() < 3600:  # 1 hour cache
+        if (datetime.now() - cached['timestamp']).total_seconds() < 3600:
             logger.info(f"Returning cached weather for {city}")
             return cached['data']
 
@@ -57,14 +57,18 @@ async def get_weather(city: str, force_update: bool = False) -> Optional[str]:
         return None
 
 async def get_weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE, force_update: bool = False) -> None:
-    city = context.user_data.get('city', 'Kyiv')
-    if context.args:
-        city = " ".join(context.args)
-        context.user_data['city'] = city
+    try:
+        city = context.user_data.get('city', 'Kyiv')
+        if context.args:
+            city = " ".join(context.args)
+            context.user_data['city'] = city
 
-    logger.info(f"Fetching weather for {city}")
-    weather_data = await get_weather(city, force_update)
-    if weather_data:
-        await update.message.reply_text(weather_data)
-    else:
-        await update.message.reply_text(f"Не вдалося отримати погоду для {city}.")
+        logger.info(f"Fetching weather for {city}")
+        weather_data = await get_weather(city, force_update)
+        if weather_data:
+            await update.message.reply_text(weather_data)
+        else:
+            await update.message.reply_text(f"Не вдалося отримати погоду для {city}.")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Помилка: {str(e)}")
+        raise

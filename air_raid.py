@@ -118,29 +118,34 @@ async def check_air_raid_status(context: ContextTypes.DEFAULT_TYPE) -> None:
                             await notify_user(context, user_id, message)
         except Exception as e:
             logger.error(f"Error notifying {user_id}: {e}", exc_info=True)
+            await context.bot.send_message(chat_id=user_id, text=f"⚠️ Помилка: {str(e)}")
 
     bot_data['data'] = current_status
     bot_data['lastUpdate'] = datetime.now(ZoneInfo("UTC")).isoformat()
 
 async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    current_alerts = await get_air_raid_status()
-    if current_alerts is None:
-        await update.message.reply_text("Не вдалося отримати статус тривог.")
-        return
+    try:
+        current_alerts = await get_air_raid_status()
+        if current_alerts is None:
+            await update.message.reply_text("Не вдалося отримати статус тривог.")
+            return
 
-    selected_region = context.user_data.get('selected_region')
-    active_regions = [
-        region for region in current_alerts
-        if region.get('activeAlerts') and (not selected_region or region['regionId'] == selected_region)
-    ]
-    if not active_regions:
-        await update.message.reply_text("Наразі тривог немає в обраній області.")
-    else:
-        message = "🚨 *Активні тривоги:*\n\n"
-        for region in active_regions:
-            name = helpers.escape_markdown(region.get('regionName', 'Невідомий регіон'), version=2)
-            alert_types = [ALERT_TYPES_TRANSLATION.get(a.get('type', 'Невідомо'), a.get('type', 'Невідомо')) 
-                         for a in region.get('activeAlerts', [])]
-            types_str = ", ".join(alert_types)
-            message += f"\\- {name}: {types_str}\n"
-        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
+        selected_region = context.user_data.get('selected_region')
+        active_regions = [
+            region for region in current_alerts
+            if region.get('activeAlerts') and (not selected_region or region['regionId'] == selected_region)
+        ]
+        if not active_regions:
+            await update.message.reply_text("Наразі тривог немає в обраній області.")
+        else:
+            message = "🚨 *Активні тривоги:*\n\n"
+            for region in active_regions:
+                name = helpers.escape_markdown(region.get('regionName', 'Невідомий регіон'), version=2)
+                alert_types = [ALERT_TYPES_TRANSLATION.get(a.get('type', 'Невідомо'), a.get('type', 'Невідомо')) 
+                             for a in region.get('activeAlerts', [])]
+                types_str = ", ".join(alert_types)
+                message += f"\\- {name}: {types_str}\n"
+            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Помилка: {str(e)}")
+        raise
