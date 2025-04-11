@@ -1,29 +1,44 @@
 import sqlite3
 import os
+from typing import Dict, Optional, Union
+from contextlib import contextmanager
 
 DATABASE_PATH = "bot_database.db"
 
+# Контекстный менеджер для работы с БД
+@contextmanager
 def get_connection():
     """Создать или получить соединение с базой данных"""
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row  # Возвращает результаты как словари
-    return conn
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        yield conn
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
 
-def init_db(conn):
+def init_db():
     """Инициализация базы данных"""
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS user_settings (
-            user_id INTEGER PRIMARY KEY,
-            notify_air_alerts INTEGER DEFAULT 0,
-            region_id TEXT,
-            region_name TEXT,
-            city TEXT,              -- Для weather.py
-            currency_preference TEXT -- Для currency.py
-        )
-    ''')
-    conn.commit()
+    with get_connection() as conn:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER PRIMARY KEY,
+                notify_air_alerts INTEGER DEFAULT 0,
+                region_id TEXT,
+                region_name TEXT,
+                city TEXT,
+                currency_preference TEXT DEFAULT 'USD',
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
 
-def get_user_settings(conn, user_id):
+def get_user_settings(conn, user_id: int) -> Dict[str, Optional[Union[int, str]]]:
     """Получить настройки пользователя"""
     cursor = conn.execute(
         "SELECT notify_air_alerts, region_id, region_name, city, currency_preference "
@@ -31,16 +46,14 @@ def get_user_settings(conn, user_id):
         (user_id,)
     )
     row = cursor.fetchone()
-    if row:
-        return {
-            "notify_air_alerts": row["notify_air_alerts"],
-            "region_id": row["region_id"],
-            "region_name": row["region_name"],
-            "city": row["city"],
-            "currency_preference": row["currency_preference"]
-        }
-    # Значения по умолчанию
+    
     return {
+        "notify_air_alerts": row["notify_air_alerts"] if row else 0,
+        "region_id": row["region_id"] if row else None,
+        "region_name": row["region_name"] if row else None,
+        "city": row["city"] if row else None,
+        "currency_preference": row["currency_preference"] if row else "USD"
+    } if row else {
         "notify_air_alerts": 0,
         "region_id": None,
         "region_name": None,
@@ -48,23 +61,35 @@ def get_user_settings(conn, user_id):
         "currency_preference": "USD"
     }
 
-def update_user_setting(conn, user_id, key, value):
+def update_user_setting(conn, user_id: int, key: str, value: Union[str, int]):
     """Обновить настройку пользователя"""
-    # Сначала вставляем запись, если её нет, сохраняя существующие значения
+    allowed_keys = {
+        'notify_air_alerts': 'INTEGER',
+        'region_id': 'TEXT',
+        'region_name': 'TEXT',
+        'city': 'TEXT',
+        'currency_preference': 'TEXT'
+    }
+    
+    if key not in allowed_keys:
+        raise ValueError(f"Invalid setting key: {key}")
+    
+    # Проверка типа значения
+    if allowed_keys[key] == 'INTEGER' and not isinstance(value, int):
+        raise ValueError(f"Value for {key} must be integer")
+    elif allowed_keys[key] == 'TEXT' and not isinstance(value, str):
+        raise ValueError(f"Value for {key} must be string")
+    
     conn.execute(
-        "INSERT OR IGNORE INTO user_settings (user_id, notify_air_alerts, region_id, region_name, city, currency_preference) "
-        "VALUES (?, 0, NULL, NULL, NULL, 'USD')",
+        "INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)",
         (user_id,)
     )
-    # Обновляем указанное поле
     conn.execute(
-        f"UPDATE user_settings SET {key} = ? WHERE user_id = ?",
+        f"UPDATE user_settings SET {key} = ?, last_updated = CURRENT_TIMESTAMP WHERE user_id = ?",
         (value, user_id)
     )
     conn.commit()
 
 if __name__ == "__main__":
-    # Инициализация базы при запуске файла напрямую (для тестирования)
-    with get_connection() as conn:
-        init_db(conn)
-        print("База данных инициализирована")
+    init_db()
+    print("База данных инициализирована")
