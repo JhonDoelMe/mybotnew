@@ -17,3 +17,4 @@ bot.log
 bot_persistence.pkl
 __pycache__/
 *.pyc
+test_bot.py
