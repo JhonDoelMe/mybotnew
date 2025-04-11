@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Dict, Set, Optional, List
 from datetime import datetime
@@ -9,7 +10,6 @@ from telegram.ext import ContextTypes
 
 import config
 import database as db
-from constants import NOTIFICATION_DELAY
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ async def notify_user(context: ContextTypes.DEFAULT_TYPE, user_id: int, message:
         message: Message to send.
     """
     try:
-        delay = float(config.cfg.get('NOTIFICATION_DELAY', 0.1))
+        delay = float(config.cfg.get('NOTIFICATION_DELAY', 0.1))  # Берем значение из config.cfg
         await context.bot.send_message(
             chat_id=user_id,
             text=message,
