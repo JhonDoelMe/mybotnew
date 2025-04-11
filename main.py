@@ -13,7 +13,8 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     filters,
-    CallbackQueryHandler
+    CallbackQueryHandler,
+    Application
 )
 from telegram.constants import ParseMode
 from telegram.error import TelegramError, Forbidden, BadRequest
@@ -55,9 +56,6 @@ except sqlite3.Error as e:
     exit(1)
 
 def require_message(func):
-    """
-    Decorator to ensure update.message exists.
-    """
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         if not update.message:
             logger.warning(f"{func.__name__} called without message")
@@ -67,9 +65,6 @@ def require_message(func):
 
 @require_message
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Sends a welcome message with main menu.
-    """
     user = update.effective_user
     user_id = user.id if user else "Unknown ID"
     first_name = helpers.escape_markdown(user.first_name, version=2) if user else "Користувач"
@@ -106,9 +101,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @require_message
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Sends a help message with available commands.
-    """
     user_id = update.effective_user.id if update.effective_user else "Unknown ID"
     logger.info(f"User {user_id} requested help.")
 
@@ -134,15 +126,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(plain_text)
 
 async def resolve_region_id(region_name: str) -> Optional[str]:
-    """
-    Resolves region name to region ID using UkraineAlarm API.
-
-    Args:
-        region_name: Name of the region.
-
-    Returns:
-        Optional[str]: Region ID or None if not found.
-    """
     alerts = await air_raid.get_air_raid_status()
     if not alerts:
         return None
@@ -153,9 +136,6 @@ async def resolve_region_id(region_name: str) -> Optional[str]:
 
 @require_message
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Subscribes user to air raid alerts for a region or all regions.
-    """
     user_id = update.effective_user.id if update.effective_user else None
     if not user_id:
         return
@@ -189,9 +169,6 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @require_message
 async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Unsubscribes user from air raid alerts.
-    """
     user_id = update.effective_user.id if update.effective_user else None
     if not user_id:
         return
@@ -219,9 +196,6 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 @require_message
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Checks user's subscription status.
-    """
     user_id = update.effective_user.id if update.effective_user else None
     if not user_id:
         return
@@ -242,9 +216,6 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @require_message
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Admin command to view subscriber count.
-    """
     user_id = update.effective_user.id if update.effective_user else None
     if user_id not in ADMIN_IDS:
         await update.message.reply_text("Доступ заборонено.")
@@ -259,9 +230,6 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @require_message
 async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Shows current air raid alerts.
-    """
     current_alerts = await air_raid.get_air_raid_status()
     if current_alerts is None:
         await update.message.reply_text("Не вдалося отримати статус тривог.")
@@ -284,10 +252,7 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             message += f"\\- {name}: {types}\n"
         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handles inline button callbacks for region subscription.
-    """
+async def button_callback(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -309,9 +274,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.message.reply_text("Помилка підписки.")
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handles text messages corresponding to keyboard buttons.
-    """
     if not update.message or not update.message.text:
         return
 
@@ -328,9 +290,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await alerts_command(update, context)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Logs errors and notifies admins.
-    """
     if context.error is None:
         logger.warning(f"Error handler called without error. Update: {update}")
         return
@@ -369,9 +328,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             logger.error(f"Failed to notify admin {admin_id}: {e}")
 
 async def cleanup_subscribers(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Removes inactive subscribers who have blocked the bot.
-    """
     subscribers = db.get_subscribers()
     for user_id, _ in set((u, r) for u, r in subscribers):
         try:
@@ -380,10 +336,7 @@ async def cleanup_subscribers(context: ContextTypes.DEFAULT_TYPE) -> None:
             db.remove_subscriber(user_id)
             logger.info(f"Removed inactive subscriber {user_id}")
 
-def main() -> None:
-    """
-    Starts the bot.
-    """
+async def main():
     logger.info("Starting bot...")
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -413,11 +366,8 @@ def main() -> None:
             job_queue.run_repeating(air_raid.check_air_raid_status, interval=90, first=10)
 
     logger.info("Bot is running...")
-    try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except TelegramError as e:
-        logger.critical(f"Failed to start polling: {e}")
-        exit(1)
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    main()
+    import asyncio
+    asyncio.run(main())
