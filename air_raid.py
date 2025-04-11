@@ -48,22 +48,51 @@ async def select_region(update: Update, context: CallbackContext):
     try:
         headers = {"Authorization": ALERTS_API_TOKEN}
         async with aiohttp.ClientSession() as session:
+            logger.info(f"Запрос к API регионов: {REGIONS_API_URL} с токеном {ALERTS_API_TOKEN[:5]}...")
             async with session.get(REGIONS_API_URL, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                logger.info(f"Статус ответа API: {response.status}")
                 if response.status == 401:
-                    await update.message.reply_text("Ошибка: Неверный API-токен")
+                    await update.message.reply_text("Ошибка: Неверный или просроченный API-токен")
                     return
-                response.raise_for_status()
-                regions = await response.json()
-        
-        # Фильтруем только области (State)
-        keyboard = [[region["regionName"]] for region in regions if region["regionType"] == "State"]
-        keyboard.append(['⬅️ Вернуться в меню тревог'])
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("Выберите регион:", reply_markup=reply_markup)
-        context.user_data['awaiting_region'] = True
+                elif response.status == 403:
+                    await update.message.reply_text("Ошибка: Доступ запрещен (проверьте токен или лимиты API)")
+                    return
+                elif response.status != 200:
+                    await update.message.reply_text(f"Ошибка API: Статус {response.status}")
+                    return
+                
+                # Получаем текст ответа для отладки
+                response_text = await response.text()
+                logger.info(f"Ответ API: {response_text}")
+                
+                # Пробуем разобрать как JSON
+                regions = json.loads(response_text)
+                
+                # Проверяем, что это список
+                if not isinstance(regions, list):
+                    logger.error(f"Ответ API не является списком: {regions}")
+                    await update.message.reply_text("Ошибка: Неверный формат данных от API")
+                    return
+                
+                # Фильтруем только области (State)
+                keyboard = [[region["regionName"]] for region in regions if region.get("regionType") == "State"]
+                if not keyboard:
+                    await update.message.reply_text("Ошибка: Нет доступных регионов")
+                    return
+                
+                keyboard.append(['⬅️ Вернуться в меню тревог'])
+                reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+                await update.message.reply_text("Выберите регион:", reply_markup=reply_markup)
+                context.user_data['awaiting_region'] = True
+    except aiohttp.ClientError as e:
+        logger.error(f"Ошибка сети при загрузке регионов: {e}")
+        await update.message.reply_text("Ошибка сети при загрузке регионов")
+    except json.JSONDecodeError as e:
+        logger.error(f"Ошибка разбора JSON: {e}")
+        await update.message.reply_text("Ошибка обработки данных от API")
     except Exception as e:
-        logger.error(f"Ошибка загрузки регионов: {e}")
-        await update.message.reply_text("Ошибка загрузки списка регионов")
+        logger.error(f"Неизвестная ошибка при загрузке регионов: {e}")
+        await update.message.reply_text("Неизвестная ошибка при загрузке регионов")
 
 async def check_air_raid(update: Update, context: CallbackContext):
     """Проверить статус тревог в выбранной локации"""
@@ -81,7 +110,7 @@ async def check_air_raid(update: Update, context: CallbackContext):
         async with aiohttp.ClientSession() as session:
             async with session.get(ALERTS_API_URL, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 if response.status == 401:
-                    await update.message.reply_text("Ошибка: Неверный API-токен")
+                    await update.message.reply_text("Ошибка: Неверный или просроченный API-токен")
                     return
                 response.raise_for_status()
                 data = await response.json()
