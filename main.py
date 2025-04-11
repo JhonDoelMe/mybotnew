@@ -336,6 +336,8 @@ async def cleanup_subscribers(context: ContextTypes.DEFAULT_TYPE) -> None:
             db.remove_subscriber(user_id)
             logger.info(f"Removed inactive subscriber {user_id}")
 
+import asyncio
+
 async def main():
     logger.info("Starting bot...")
     application = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -366,8 +368,18 @@ async def main():
             job_queue.run_repeating(air_raid.check_air_raid_status, interval=90, first=10)
 
     logger.info("Bot is running...")
-    await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    await application.initialize()  # Инициализация приложения
+    await application.start()       # Запуск бота
+    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)  # Запуск polling
+    await asyncio.Event().wait()    # Бесконечное ожидание (бот работает)
 
-if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+        loop.run_until_complete(application.stop())
+        loop.run_until_complete(application.shutdown())
+    finally:
+        loop.close()
