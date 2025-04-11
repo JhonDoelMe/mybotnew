@@ -1,90 +1,58 @@
-import requests
 import logging
-from typing import Optional, List, Dict, Any
-from cachetools import TTLCache
+from typing import Optional, Dict
+from datetime import datetime
 
-import telegram
+import requests
+from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.constants import ParseMode  # Добавляем импорт ParseMode
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+import config
+import database as db
+
 logger = logging.getLogger(__name__)
 
-PRIVAT_API_URL = "https://api.privatbank.ua/p24api/pubinfo?exchange&json&coursid=5"
-currency_cache = TTLCache(maxsize=1, ttl=3600)  # Cache for 1 hour
+CURRENCY_API_URL = "https://api.exchangerate-api.com/v4/latest/UAH"
+CURRENCY_CACHE: Dict[str, dict] = {}
 
-def get_currency_rates() -> Optional[List[Dict[str, Any]]]:
-    """
-    Fetches currency rates from PrivatBank API.
-
-    Returns:
-        Optional[List[Dict[str, Any]]]: List of currency rates or None on error.
-    """
-    if 'rates' in currency_cache:
+async def get_currency_rates(force_update: bool = False) -> Optional[Dict[str, float]]:
+    if not force_update and CURRENCY_CACHE and (datetime.now() - CURRENCY_CACHE['timestamp']).total_seconds() < 86400:  # 24 hours cache
         logger.info("Returning cached currency rates.")
-        return currency_cache['rates']
+        return CURRENCY_CACHE['rates']
 
     try:
-        response = requests.get(PRIVAT_API_URL, timeout=10)
+        response = requests.get(CURRENCY_API_URL, timeout=10)
         response.raise_for_status()
-
-        if response.status_code == 200:
-            try:
-                data = response.json()
-                if isinstance(data, list):
-                    currency_cache['rates'] = data
-                    return data
-                logger.error(f"Unexpected data type: {type(data)}")
-                return None
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to decode JSON: {e}")
-                return None
-        else:
-            logger.error(f"API request failed with status {response.status_code}")
-            return None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching currency rates: {e}")
+        data = response.json()
+        CURRENCY_CACHE['rates'] = data['rates']
+        CURRENCY_CACHE['timestamp'] = datetime.now()
+        return data['rates']
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch currency rates: {e}")
         return None
 
-def format_currency_message(rates: List[Dict[str, Any]]) -> str:
-    """
-    Formats a message with currency rates.
-
-    Args:
-        rates: List of currency rate dictionaries.
-
-    Returns:
-        str: Formatted message for Telegram.
-    """
+async def get_currency_command(update: Update, context: ContextTypes.DEFAULT_TYPE, force_update: bool = False) -> None:
+    user_id = update.effective_user.id
+    rates = await get_currency_rates(force_update)
     if not rates:
-        return "Не вдалося отримати курси валют."
+        await update.message.reply_text("Не вдалося отримати курси валют.")
+        return
 
-    message = "Курс валют (готівка, ПриватБанк):\n\n"
-    for rate in rates:
-        ccy = rate.get('ccy')
-        base_ccy = rate.get('base_ccy')
-        buy = rate.get('buy')
-        sale = rate.get('sale')
-        if ccy and base_ccy and buy and sale:
-            if ccy in ['USD', 'EUR']:
-                message += f"🇺🇸 {ccy}/{base_ccy}:\n" \
-                           f"   Купівля: {float(buy):.2f}\n" \
-                           f"   Продаж:  {float(sale):.2f}\n\n"
-    return message.strip()
+    user_currencies = db.get_user_currencies(user_id) or ['USD', 'EUR']
+    message = "💵 *Курси валют (UAH):*\n\n"
+    for code in user_currencies:
+        if code in rates:
+            rate = rates[code]
+            message += f"{code}: {1/rate:.2f} UAH\n"
+    await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
-async def get_currency_command(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handler for currency rates command.
+def add_currency_code(user_id: int, code: str) -> bool:
+    if len(code) != 3 or not code.isalpha():
+        return False
+    rates = CURRENCY_CACHE.get('rates', {})
+    if code not in rates:
+        return False
+    return db.add_user_currency(user_id, code.upper())
 
-    Args:
-        update: Telegram update object.
-        context: Telegram context.
-    """
-    rates = get_currency_rates()
-    if rates:
-        message = format_currency_message(rates)
-        await update.message.reply_text(message)
-    else:
-        await update.message.reply_text("Вибачте, не вдалося отримати актуальні курси валют.")
+def get_user_currencies(user_id: int) -> Optional[list]:
+    return db.get_user_currencies(user_id)

@@ -24,7 +24,6 @@ import database as db
 import air_raid
 import weather
 import currency
-from constants import BTN_CURRENCY, BTN_WEATHER, BTN_AIR_RAID
 
 load_dotenv()
 
@@ -49,6 +48,26 @@ BOT_TOKEN = config.cfg.get('BOT_TOKEN')
 ADMIN_IDS = [int(id_str) for id_str in config.cfg.get('ADMIN_IDS', '').split(',') if id_str.strip().isdigit()]
 AIR_RAID_CHECK_INTERVAL = config.cfg.get('AIR_RAID_CHECK_INTERVAL', 90)
 
+# Кнопки основного меню
+MAIN_MENU = [
+    ["🔔 Тревога", "💵 Курс валют"],
+    ["☀️ Погода"]
+]
+
+# Кнопки подменю
+WEATHER_MENU = [
+    ["🌆 Изменить город", "🔄 Обновить прогноз"],
+    ["⬅️ Назад"]
+]
+CURRENCY_MENU = [
+    ["🔄 Обновить курс", "➕ Добавить код валюты"],
+    ["⬅️ Назад"]
+]
+AIR_RAID_MENU = [
+    ["🔄 Обновить статус", "🌍 Выбрать область"],
+    ["⬅️ Назад"]
+]
+
 try:
     db.init_db()
 except sqlite3.Error as e:
@@ -70,33 +89,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     first_name = helpers.escape_markdown(user.first_name, version=2) if user else "Користувач"
     logger.info(f"User {user_id} started the bot.")
 
-    reply_markup = ReplyKeyboardMarkup(
-        [
-            [KeyboardButton(BTN_CURRENCY), KeyboardButton(BTN_WEATHER)],
-            [KeyboardButton(BTN_AIR_RAID)]
-        ],
-        resize_keyboard=True
-    )
+    context.user_data['menu'] = 'main'
+    reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
 
     welcome_message = (
         f"Привіт, {first_name}\\!\n\n"
-        "Я твій помічник\\.\n\nОбери дію:\n"
-        f"\\- `{BTN_CURRENCY}`: Курс валют\\.\n"
-        f"\\- `{BTN_WEATHER}`: Погода в Києві або `/weather Місто`\\.\n"
-        f"\\- `{BTN_AIR_RAID}`: Статус тривоги\\.\n\n"
-        "Команди:\n"
-        "`/help` \\- Допомога\n"
-        "`/subscribe` \\- Підписка на тривоги\n"
-        "`/unsubscribe` \\- Відписка\n"
-        "`/status` \\- Статус підписки\n"
-        "`/alerts` \\- Поточні тривоги"
+        "Я твій помічник\\. Обери дію з меню нижче:"
     )
 
     try:
         await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
     except TelegramError as e:
         logger.error(f"Error sending start message: {e}")
-        plain_message = welcome_message.replace('\\!', '!').replace('\\.', '.').replace('\\-', '-')
+        plain_message = welcome_message.replace('\\!', '!').replace('\\.', '.')
         await update.message.reply_text(plain_message, reply_markup=reply_markup)
 
 @require_message
@@ -106,23 +111,23 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     help_text = (
         "Ось що я вмію:\n\n"
-        f"\\- *{helpers.escape_markdown(BTN_CURRENCY, version=2)}*: Курс USD/EUR\\.\n"
-        f"\\- *{helpers.escape_markdown(BTN_WEATHER, version=2)}*: Погода в Києві або `/weather Місто`\\.\n"
-        f"\\- *{helpers.escape_markdown(BTN_AIR_RAID, version=2)}*: Статус тривоги\\.\n\n"
+        "*Основне меню:*\n"
+        "\\- 🔔 *Тревога*: Статус тривог та підписка\\.\n"
+        "\\- 💵 *Курс валют*: Курс валют\\.\n"
+        "\\- ☀️ *Погода*: Прогноз погоди\\.\n\n"
         "*Команди:*\n"
-        "`/start` \\- Головне меню\\.\n"
+        "`/start` \\- Повернення до меню\\.\n"
         "`/help` \\- Допомога\\.\n"
-        "`/subscribe [регіон]` \\- Підписка на тривоги\\.\n"
-        "`/unsubscribe [регіон]` \\- Відписка\\.\n"
-        "`/status` \\- Статус підписки\\.\n"
-        "`/alerts` \\- Поточні тривоги\\."
+        "`/subscribe` \\- Підписка на тривоги\\.\n"
+        "`/unsubscribe` \\- Відписка\\.\n"
+        "`/status` \\- Статус підписки\\."
     )
 
     try:
         await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN_V2)
     except TelegramError as e:
         logger.error(f"Error sending help message: {e}")
-        plain_text = help_text.replace('\\*', '*').replace('\\.', '.').replace('\\-', '-')
+        plain_text = help_text.replace('\\*', '*').replace('\\.', '.')
         await update.message.reply_text(plain_text)
 
 async def resolve_region_id(region_name: str) -> Optional[str]:
@@ -228,50 +233,6 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.error(f"Error in admin command: {e}")
         await update.message.reply_text("Помилка отримання даних.")
 
-@require_message
-async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    current_alerts = await air_raid.get_air_raid_status()
-    if current_alerts is None:
-        await update.message.reply_text("Не вдалося отримати статус тривог.")
-        return
-
-    active_regions = [
-        region for region in current_alerts
-        if region.get('activeAlerts')
-    ]
-    if not active_regions:
-        await update.message.reply_text("Наразі тривог немає.")
-    else:
-        message = "🚨 *Активні тривоги:*\n\n"
-        for region in active_regions:
-            name = helpers.escape_markdown(region.get('regionName', 'Невідомий регіон'), version=2)
-            alert_types = [air_raid.ALERT_TYPES_TRANSLATION.get(a.get('type', 'Невідомо'), a.get('type', 'Невідомо')) 
-                         for a in region.get('activeAlerts', [])]
-            types_str = ", ".join(alert_types)
-            message += f"\\- {name}: {types_str}\n"
-        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
-
-async def button_callback(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    data = query.data.split(':')[1]
-
-    region_id = None if data == 'all' else data
-    if db.is_subscribed(user_id, region_id):
-        await query.message.reply_text("Ви вже підписані на цей регіон.")
-        return
-
-    if db.add_subscriber(user_id, region_id):
-        alerts = await air_raid.get_air_raid_status()
-        region_name = next(
-            (r.get('regionName') for r in alerts if r.get('regionId') == region_id),
-            'всі регіони'
-        ) if alerts else 'всі регіони'
-        await query.message.reply_text(f"Підписано на {region_name}.")
-    else:
-        await query.message.reply_text("Помилка підписки.")
-
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.text:
         return
@@ -280,13 +241,116 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id if update.effective_user else "Unknown ID"
     logger.info(f"Received text from {user_id}: '{text}'")
 
-    if text == BTN_CURRENCY:
+    # Главное меню
+    if text == "🔔 Тревога":
+        context.user_data['menu'] = 'air_raid'
+        reply_markup = ReplyKeyboardMarkup(AIR_RAID_MENU, resize_keyboard=True)
+        await update.message.reply_text("Меню тривог:", reply_markup=reply_markup)
+    elif text == "💵 Курс валют":
+        context.user_data['menu'] = 'currency'
+        reply_markup = ReplyKeyboardMarkup(CURRENCY_MENU, resize_keyboard=True)
+        await update.message.reply_text("Меню валют:", reply_markup=reply_markup)
         await currency.get_currency_command(update, context)
-    elif text == BTN_WEATHER:
-        context.args = []
+    elif text == "☀️ Погода":
+        context.user_data['menu'] = 'weather'
+        reply_markup = ReplyKeyboardMarkup(WEATHER_MENU, resize_keyboard=True)
+        await update.message.reply_text("Меню погоди:", reply_markup=reply_markup)
         await weather.get_weather_command(update, context)
-    elif text == BTN_AIR_RAID:
-        await alerts_command(update, context)
+
+    # Подменю Погода
+    elif context.user_data.get('menu') == 'weather':
+        if text == "🌆 Изменить город":
+            await update.message.reply_text("Введіть назву міста:")
+            context.user_data['awaiting_city'] = True
+        elif text == "🔄 Обновить прогноз":
+            context.args = [context.user_data.get('city', 'Kyiv')]
+            await weather.get_weather_command(update, context, force_update=True)
+        elif text == "⬅️ Назад":
+            context.user_data['menu'] = 'main'
+            reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
+            await update.message.reply_text("Повернення до основного меню:", reply_markup=reply_markup)
+
+    # Подменю Курс валют
+    elif context.user_data.get('menu') == 'currency':
+        if text == "🔄 Обновить курс":
+            await currency.get_currency_command(update, context, force_update=True)
+        elif text == "➕ Добавить код валюты":
+            await update.message.reply_text("Введіть код валюти (наприклад, USD, EUR):")
+            context.user_data['awaiting_currency'] = True
+        elif text == "⬅️ Назад":
+            context.user_data['menu'] = 'main'
+            reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
+            await update.message.reply_text("Повернення до основного меню:", reply_markup=reply_markup)
+
+    # Подменю Тревога
+    elif context.user_data.get('menu') == 'air_raid':
+        if text == "🔄 Обновить статус":
+            await air_raid.alerts_command(update, context)
+        elif text == "🌍 Выбрать область":
+            alerts = await air_raid.get_air_raid_status()
+            if not alerts:
+                await update.message.reply_text("Не вдалося завантажити список регіонів.")
+                return
+            keyboard = [
+                [InlineKeyboardButton(region.get('regionName'), callback_data=f"region:{region.get('regionId')}")]
+                for region in sorted(alerts, key=lambda x: x.get('regionName', ''))
+            ]
+            keyboard.append([InlineKeyboardButton("Всі регіони", callback_data="region:all")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text("Оберіть область:", reply_markup=reply_markup)
+        elif text == "⬅️ Назад":
+            context.user_data['menu'] = 'main'
+            reply_markup = ReplyKeyboardMarkup(MAIN_MENU, resize_keyboard=True)
+            await update.message.reply_text("Повернення до основного меню:", reply_markup=reply_markup)
+
+    # Обработка ввода города
+    elif context.user_data.get('awaiting_city'):
+        context.user_data['city'] = text
+        context.user_data['awaiting_city'] = False
+        context.args = [text]
+        await weather.get_weather_command(update, context)
+    
+    # Обработка ввода валюты
+    elif context.user_data.get('awaiting_currency'):
+        currency_code = text.upper()
+        context.user_data['awaiting_currency'] = False
+        if currency.add_currency_code(user_id, currency_code):
+            await update.message.reply_text(f"Додано валюту {currency_code}.")
+            await currency.get_currency_command(update, context)
+        else:
+            await update.message.reply_text("Невірний код валюти або помилка додавання.")
+
+async def button_callback(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    action, data = query.data.split(':')
+
+    if action == "subscribe":
+        region_id = None if data == 'all' else data
+        if db.is_subscribed(user_id, region_id):
+            await query.message.reply_text("Ви вже підписані на цей регіон.")
+            return
+        if db.add_subscriber(user_id, region_id):
+            alerts = await air_raid.get_air_raid_status()
+            region_name = next(
+                (r.get('regionName') for r in alerts if r.get('regionId') == region_id),
+                'всі регіони'
+            ) if alerts else 'всі регіони'
+            await query.message.reply_text(f"Підписано на {region_name}.")
+        else:
+            await query.message.reply_text("Помилка підписки.")
+    
+    elif action == "region":
+        region_id = None if data == 'all' else data
+        context.user_data['selected_region'] = region_id
+        alerts = await air_raid.get_air_raid_status()
+        region_name = next(
+            (r.get('regionName') for r in alerts if r.get('regionId') == region_id),
+            'всі регіони'
+        ) if alerts else 'всі регіони'
+        await query.message.reply_text(f"Обрано область: {region_name}. Тривоги будуть відображатися лише для неї.")
+        await air_raid.alerts_command(update, context)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.error is None:
@@ -346,7 +410,6 @@ def main():
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("weather", weather.get_weather_command))
-    application.add_handler(CommandHandler("alerts", alerts_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_error_handler(error_handler)
