@@ -1,0 +1,6 @@
+.gcloudignore
+__pycache__
+*.pyc
+*.log
+venv/
+bot_database.db
