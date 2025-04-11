@@ -1,95 +1,101 @@
+# database.py
 import sqlite3
-import os
-from typing import Dict, Optional, Union
-from contextlib import contextmanager
+import logging
+from typing import List, Tuple, Optional
+from datetime import datetime
 
-DATABASE_PATH = "bot_database.db"
+DATABASE_FILE = 'bot_database.db'
 
-# Контекстный менеджер для работы с БД
-@contextmanager
-def get_connection():
-    """Создать или получить соединение с базой данных"""
-    conn = None
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+def init_db() -> None:
+    """Инициализирует базу данных и создает таблицу подписчиков, если она не существует."""
     try:
-        conn = sqlite3.connect(DATABASE_PATH)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        yield conn
+        with sqlite3.connect(DATABASE_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS subscribers (
+                    user_id INTEGER PRIMARY KEY,
+                    subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Проверка и добавление колонки subscribed_at для старых баз данных
+            cursor.execute("PRAGMA table_info(subscribers)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'subscribed_at' not in columns:
+                cursor.execute("ALTER TABLE subscribers ADD COLUMN subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                logger.info("Added 'subscribed_at' column to subscribers table.")
+            conn.commit()
+            logger.info("Database initialized successfully.")
     except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        raise
-    finally:
-        if conn:
-            conn.close()
+        logger.error(f"Database initialization error: {e}")
+        raise  # Пробрасываем исключение дальше, чтобы приложение знало об ошибке
 
-def init_db():
-    """Инициализация базы данных"""
-    with get_connection() as conn:
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_settings (
-                user_id INTEGER PRIMARY KEY,
-                notify_air_alerts INTEGER DEFAULT 0,
-                region_id TEXT,
-                region_name TEXT,
-                city TEXT,
-                currency_preference TEXT DEFAULT 'USD',
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
+def add_subscriber(user_id: int) -> bool:
+    """
+    Добавляет пользователя в список подписчиков.
+    Возвращает True при успехе, False при ошибке.
+    """
+    try:
+        with sqlite3.connect(DATABASE_FILE) as conn:
+            cursor = conn.cursor()
+            # Используем INSERT OR IGNORE, чтобы не вызывать ошибку при попытке добавить существующего пользователя
+            cursor.execute("INSERT OR IGNORE INTO subscribers (user_id, subscribed_at) VALUES (?, ?)",
+                           (user_id, datetime.now()))
+            conn.commit()
+            # Проверяем, была ли строка действительно вставлена (или уже существовала)
+            return cursor.rowcount > 0 or is_subscribed(user_id) # Вернет True, если вставили или уже был подписан
+    except sqlite3.Error as e:
+        logger.error(f"Database error in add_subscriber for user {user_id}: {e}")
+        return False
 
-def get_user_settings(conn, user_id: int) -> Dict[str, Optional[Union[int, str]]]:
-    """Получить настройки пользователя"""
-    cursor = conn.execute(
-        "SELECT notify_air_alerts, region_id, region_name, city, currency_preference "
-        "FROM user_settings WHERE user_id = ?",
-        (user_id,)
-    )
-    row = cursor.fetchone()
-    
-    return {
-        "notify_air_alerts": row["notify_air_alerts"] if row else 0,
-        "region_id": row["region_id"] if row else None,
-        "region_name": row["region_name"] if row else None,
-        "city": row["city"] if row else None,
-        "currency_preference": row["currency_preference"] if row else "USD"
-    } if row else {
-        "notify_air_alerts": 0,
-        "region_id": None,
-        "region_name": None,
-        "city": None,
-        "currency_preference": "USD"
-    }
+def remove_subscriber(user_id: int) -> bool:
+    """
+    Удаляет пользователя из списка подписчиков.
+    Возвращает True при успехе, False при ошибке.
+    """
+    try:
+        with sqlite3.connect(DATABASE_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM subscribers WHERE user_id = ?", (user_id,))
+            conn.commit()
+            # Возвращает True, если строка была удалена
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        logger.error(f"Database error in remove_subscriber for user {user_id}: {e}")
+        return False
 
-def update_user_setting(conn, user_id: int, key: str, value: Union[str, int]):
-    """Обновить настройку пользователя"""
-    allowed_keys = {
-        'notify_air_alerts': 'INTEGER',
-        'region_id': 'TEXT',
-        'region_name': 'TEXT',
-        'city': 'TEXT',
-        'currency_preference': 'TEXT'
-    }
-    
-    if key not in allowed_keys:
-        raise ValueError(f"Invalid setting key: {key}")
-    
-    # Проверка типа значения
-    if allowed_keys[key] == 'INTEGER' and not isinstance(value, int):
-        raise ValueError(f"Value for {key} must be integer")
-    elif allowed_keys[key] == 'TEXT' and not isinstance(value, str):
-        raise ValueError(f"Value for {key} must be string")
-    
-    conn.execute(
-        "INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)",
-        (user_id,)
-    )
-    conn.execute(
-        f"UPDATE user_settings SET {key} = ?, last_updated = CURRENT_TIMESTAMP WHERE user_id = ?",
-        (value, user_id)
-    )
-    conn.commit()
+def is_subscribed(user_id: int) -> bool:
+    """
+    Проверяет, подписан ли пользователь.
+    Возвращает True, если подписан, иначе False.
+    """
+    try:
+        with sqlite3.connect(DATABASE_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM subscribers WHERE user_id = ?", (user_id,))
+            return cursor.fetchone() is not None
+    except sqlite3.Error as e:
+        logger.error(f"Database error in is_subscribed for user {user_id}: {e}")
+        return False
 
-if __name__ == "__main__":
-    init_db()
-    print("База данных инициализирована")
+def get_subscribers() -> List[int]:
+    """
+    Возвращает список ID всех подписчиков.
+    """
+    subscribers_list: List[int] = []
+    try:
+        with sqlite3.connect(DATABASE_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM subscribers")
+            # fetchall() возвращает список кортежей [(id1,), (id2,)]
+            rows: List[Tuple[int]] = cursor.fetchall()
+            subscribers_list = [row[0] for row in rows]
+    except sqlite3.Error as e:
+        logger.error(f"Database error in get_subscribers: {e}")
+        # Возвращаем пустой список в случае ошибки
+    return subscribers_list

@@ -1,140 +1,89 @@
-import os
-import aiohttp
+# currency.py
+import requests
+import json
 import logging
-from typing import Dict, Optional
-from cachetools import TTLCache
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import CallbackContext
-from database import get_connection, get_user_settings, update_user_setting
-from dotenv import load_dotenv
+from typing import Optional, List, Dict, Any
 
-load_dotenv()
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Конфигурация API
-CURRENCY_API_URL = "https://api.exchangerate-api.com/v4/latest/UAH"
-CURRENCY_API_KEY = os.getenv("CURRENCY_API_KEY")
+# URL API ПриватБанка для получения курсов наличной валюты
+PRIVAT_API_URL = "https://api.privatbank.ua/p24api/pubinfo?exchange&json&coursid=5"
 
-# Кэширование на 1 час
-CURRENCY_CACHE = TTLCache(maxsize=10, ttl=3600)
+def get_currency_rates() -> Optional[List[Dict[str, Any]]]:
+    """
+    Получает курсы валют с API ПриватБанка.
 
-# Поддерживаемые валюты
-SUPPORTED_CURRENCIES = {
-    'USD': '💵 Доллар США',
-    'EUR': '€ Евро',
-    'PLN': '🇵🇱 Польский злотый',
-    'GBP': '🇬🇧 Фунт стерлингов'
-}
-
-class CurrencyAPI:
-    @staticmethod
-    async def get_exchange_rates() -> Optional[Dict]:
-        """Получить текущие курсы валют"""
-        if not CURRENCY_API_KEY:
-            raise ValueError("API key not configured")
-            
-        if 'rates' in CURRENCY_CACHE:
-            return CURRENCY_CACHE['rates']
-            
-        headers = {"Authorization": f"Bearer {CURRENCY_API_KEY}"} if CURRENCY_API_KEY else {}
-        
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(
-                    CURRENCY_API_URL,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    response.raise_for_status()
-                    data = await response.json()
-                    CURRENCY_CACHE['rates'] = data['rates']
-                    return data['rates']
-            except Exception as e:
-                logger.error(f"Ошибка получения курсов валют: {e}")
-                return None
-
-async def get_exchange_rate(update: Update, context: CallbackContext):
-    """Получить курс валюты"""
-    user_id = update.effective_user.id
-    with get_connection() as conn:
-        settings = get_user_settings(conn, user_id)
-        
-        # Определяем запрошенную валюту
-        text = update.message.text
-        if text in ('💲 USD', '€ EUR'):
-            currency = text.split()[1] if text.startswith('€') else 'USD'
-        else:
-            currency = settings['currency_preference']
-
-    if currency not in SUPPORTED_CURRENCIES:
-        await update.message.reply_text("❌ Валюта не поддерживается")
-        return
-    
+    Returns:
+        Optional[List[Dict[str, Any]]]: Список словарей с данными о курсах или None в случае ошибки.
+    """
     try:
-        rates = await CurrencyAPI.get_exchange_rates()
-        if not rates:
-            raise ValueError("Не удалось получить курсы валют")
-            
-        rate = rates.get(currency)
-        if not rate:
-            raise ValueError(f"Курс для {currency} не найден")
-            
-        await update.message.reply_text(
-            f"{SUPPORTED_CURRENCIES[currency]}\n"
-            f"➡️ 1 {currency} = {float(rate):.2f} UAH\n"
-            f"⬅️ 1 UAH = {1/float(rate):.4f} {currency}"
-        )
-        
+        response = requests.get(PRIVAT_API_URL, timeout=10)
+        response.raise_for_status() # Проверка на HTTP ошибки
+
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                if isinstance(data, list):
+                    return data
+                else:
+                    logger.error(f"Currency API returned unexpected data type: {type(data)}. Expected list.")
+                    return None
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to decode JSON response from Currency API: {e}")
+                logger.debug(f"Response text: {response.text}")
+                return None
+            except Exception as e:
+                 logger.error(f"An unexpected error occurred during JSON processing: {e}")
+                 return None
+        else:
+            logger.error(f"Currency API request failed with status code {response.status_code}: {response.text}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error fetching currency rates: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Ошибка получения курса: {e}")
-        await update.message.reply_text("⚠️ Не удалось получить курс валюты")
+        logger.error(f"An unexpected error occurred in get_currency_rates: {e}")
+        return None
 
-async def show_currency_menu(update: Update, context: CallbackContext):
-    """Показать меню валют"""
-    user_id = update.effective_user.id
-    with get_connection() as conn:
-        settings = get_user_settings(conn, user_id)
-        currency_status = settings['currency_preference']
-    
-    keyboard = [
-        ['💲 USD', '€ EUR'],
-        ['🇵🇱 PLN', '🇬🇧 GBP'],
-        ['🔄 Изменить валюту'],
-        ['⬅️ Главное меню']
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    
-    await update.message.reply_text(
-        f"💱 Меню валют\n\n"
-        f"Текущая валюта: {SUPPORTED_CURRENCIES.get(currency_status, currency_status)}",
-        reply_markup=reply_markup
-    )
+def format_currency_message(rates: List[Dict[str, Any]]) -> str:
+    """
+    Форматирует сообщение с курсами валют.
 
-async def handle_currency_change(update: Update, context: CallbackContext):
-    """Обработать изменение валюты"""
-    text = update.message.text
-    if text == '🔄 Изменить валюту':
-        await _show_currency_selection(update)
-    elif text in SUPPORTED_CURRENCIES:
-        user_id = update.effective_user.id
-        currency = text.split()[1] if text.startswith('€') else text.split()[0]
-        
-        with get_connection() as conn:
-            update_user_setting(conn, user_id, 'currency_preference', currency)
-            await update.message.reply_text(
-                f"✅ Валюта изменена на {SUPPORTED_CURRENCIES[currency]}"
-            )
-            await show_currency_menu(update, context)
+    Args:
+        rates: Список словарей с данными о курсах.
 
-async def _show_currency_selection(update: Update):
-    """Показать выбор валюты"""
-    keyboard = [
-        ['💲 USD', '€ EUR'],
-        ['🇵🇱 PLN', '🇬🇧 GBP'],
-        ['⬅️ Назад']
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(
-        "Выберите предпочитаемую валюту:",
-        reply_markup=reply_markup
-    )
+    Returns:
+        str: Отформатированное сообщение для пользователя.
+    """
+    if not rates:
+        return "Не вдалося отримати курси валют."
+
+    message = "Курс валют (готівка, ПриватБанк):\n\n"
+    for rate in rates:
+        ccy = rate.get('ccy')
+        base_ccy = rate.get('base_ccy')
+        buy = rate.get('buy')
+        sale = rate.get('sale')
+        if ccy and base_ccy and buy and sale:
+            # Отображаем только USD и EUR для простоты
+            if ccy in ['USD', 'EUR']:
+                 message += f"🇺🇸 {ccy}/{base_ccy}:\n" \
+                           f"   Купівля: {float(buy):.2f}\n" \
+                           f"   Продаж:  {float(sale):.2f}\n\n"
+
+    return message.strip()
+
+async def get_currency_command(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик для получения и отправки курсов валют."""
+    rates = get_currency_rates()
+    if rates:
+        message = format_currency_message(rates)
+        await update.message.reply_text(message)
+    else:
+        await update.message.reply_text("Вибачте, не вдалося отримати актуальні курси валют.")
