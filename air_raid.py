@@ -10,27 +10,9 @@ import logging
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ALERTS_API_URL = "https://api.alerts.in.ua/v1/alerts/active.json"
-ALERTS_API_TOKEN = os.getenv("ALERTS_IN_UA_TOKEN")
-
-OBLASTS = {
-    "3": "Хмельницька область", "4": "Вінницька область", "5": "Рівненська область",
-    "8": "Волинська область", "9": "Дніпропетровська область", "10": "Житомирська область",
-    "11": "Закарпатська область", "12": "Запорізька область", "13": "Івано-Франківська область",
-    "14": "Київська область", "15": "Кіровоградська область", "16": "Луганська область",
-    "17": "Миколаївська область", "18": "Одеська область", "19": "Полтавська область",
-    "20": "Сумська область", "21": "Тернопільська область", "22": "Харківська область",
-    "23": "Херсонська область", "24": "Черкаська область", "25": "Чернігівська область",
-    "26": "Чернівецька область", "27": "Львівська область", "28": "Донецька область",
-    "29": "Автономна Республіка Крим", "30": "м. Севастополь", "31": "м. Київ"
-}
-
-try:
-    with open('locations.json', 'r', encoding='utf-8') as f:
-        LOCATIONS = json.load(f)
-except FileNotFoundError:
-    logger.error("Файл locations.json не найден!")
-    LOCATIONS = {}
+ALERTS_API_URL = "https://api.ukrainealarm.com/api/v3/alerts/active"
+REGIONS_API_URL = "https://api.ukrainealarm.com/api/v3/regions"
+ALERTS_API_TOKEN = os.getenv("UKRAINE_ALARM_API_TOKEN")
 
 async def show_air_raid_menu(update: Update, context: CallbackContext):
     """Показать меню тревог"""
@@ -39,15 +21,12 @@ async def show_air_raid_menu(update: Update, context: CallbackContext):
         settings = get_user_settings(conn, user_id)
         
         status = "включены" if settings['notify_air_alerts'] else "выключены"
-        oblast = OBLASTS.get(settings['oblast_uid'], "не выбрана")
-        location_uid = settings['location_uid']
-        location = next((name for uid, name in LOCATIONS.get(settings['oblast_uid'], {}).items() 
-                        if uid == location_uid), "не выбран") if location_uid else "не выбран"
+        region_id = settings.get('region_id', None)
+        region_name = settings.get('region_name', "не выбрана")  # Храним имя для удобства
         
         keyboard = [
             ['🔍 Проверить тревоги'],
-            ['🌍 Выбрать область'],
-            ['🏘️ Выбрать город'],
+            ['🌍 Выбрать регион'],
             ['🔔 Включить уведомления' if not settings['notify_air_alerts'] else '🔕 Отключить уведомления'],
             ['⬅️ Вернуться в главное меню']
         ]
@@ -55,74 +34,70 @@ async def show_air_raid_menu(update: Update, context: CallbackContext):
         
         await update.message.reply_text(
             f"Уведомления: {status}\n"
-            f"Область: {oblast}\n"
-            f"Локация: {location}",
+            f"Регион: {region_name}",
             reply_markup=reply_markup
         )
     return settings
 
-async def select_oblast(update: Update, context: CallbackContext):
-    """Показать список областей для выбора"""
-    keyboard = [[oblast] for oblast in OBLASTS.values()]
-    keyboard.append(['⬅️ Вернуться в меню тревог'])
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Выберите область:", reply_markup=reply_markup)
-    context.user_data['awaiting_oblast'] = True
-
-async def select_location(update: Update, context: CallbackContext):
-    """Показать список локаций в выбранной области"""
-    user_id = update.effective_user.id
-    with get_connection() as conn:
-        settings = get_user_settings(conn, user_id)
-        oblast_uid = settings['oblast_uid']
-    
-    if not oblast_uid:
-        await update.message.reply_text("Сначала выберите область!")
+async def select_region(update: Update, context: CallbackContext):
+    """Показать список регионов для выбора"""
+    if not ALERTS_API_TOKEN:
+        await update.message.reply_text("Ошибка: API-токен для ukrainealarm.com не настроен")
         return
     
-    locations = LOCATIONS.get(oblast_uid, {})
-    if not locations:
-        await update.message.reply_text("Нет доступных локаций для этой области.")
-        return
-    
-    keyboard = [[name] for name in locations.values()]
-    keyboard.append(['⬅️ Вернуться в меню тревог'])
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Выберите город или громаду:", reply_markup=reply_markup)
-    context.user_data['awaiting_location'] = True
+    try:
+        headers = {"Authorization": ALERTS_API_TOKEN}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(REGIONS_API_URL, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 401:
+                    await update.message.reply_text("Ошибка: Неверный API-токен")
+                    return
+                response.raise_for_status()
+                regions = await response.json()
+        
+        # Фильтруем только области (State)
+        keyboard = [[region["regionName"]] for region in regions if region["regionType"] == "State"]
+        keyboard.append(['⬅️ Вернуться в меню тревог'])
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text("Выберите регион:", reply_markup=reply_markup)
+        context.user_data['awaiting_region'] = True
+    except Exception as e:
+        logger.error(f"Ошибка загрузки регионов: {e}")
+        await update.message.reply_text("Ошибка загрузки списка регионов")
 
 async def check_air_raid(update: Update, context: CallbackContext):
     """Проверить статус тревог в выбранной локации"""
     if not ALERTS_API_TOKEN:
-        await update.message.reply_text("Ошибка: API-токен для alerts.in.ua не настроен")
+        await update.message.reply_text("Ошибка: API-токен для ukrainealarm.com не настроен")
         return
     
     user_id = update.effective_user.id
     with get_connection() as conn:
         settings = get_user_settings(conn, user_id)
-        location_uid = settings['location_uid']
+        region_id = settings.get('region_id')
     
     try:
-        params = {"token": ALERTS_API_TOKEN}
+        headers = {"Authorization": ALERTS_API_TOKEN}
         async with aiohttp.ClientSession() as session:
-            async with session.get(ALERTS_API_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+            async with session.get(ALERTS_API_URL, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 if response.status == 401:
-                    await update.message.reply_text("Ошибка: Неверный или просроченный API-токен для alerts.in.ua")
+                    await update.message.reply_text("Ошибка: Неверный API-токен")
                     return
                 response.raise_for_status()
                 data = await response.json()
         
-        alerts = data.get("alerts", [])
-        if not location_uid:
-            active_alerts = [alert["location_title"] for alert in alerts if alert.get("finished_at") is None]
+        active_alerts = []
+        if not region_id:
+            active_alerts = [region["regionName"] for region in data if region["activeAlerts"]]
         else:
-            active_alerts = [alert["location_title"] for alert in alerts 
-                            if alert.get("finished_at") is None and alert.get("location_uid") == location_uid]
+            for region in data:
+                if region["regionId"] == region_id and region["activeAlerts"]:
+                    active_alerts.append(region["regionName"])
         
         if active_alerts:
             message = "🚨 Тревога в:\n" + "\n".join(active_alerts)
         else:
-            message = "✅ Нет активных тревог в выбранной локации"
+            message = "✅ Нет активных тревог в выбранном регионе"
             
         await update.message.reply_text(message)
     except Exception as e:
@@ -142,56 +117,41 @@ async def toggle_notifications(update: Update, context: CallbackContext):
         await show_air_raid_menu(update, context)
 
 async def handle_air_raid_input(update: Update, context: CallbackContext):
-    """Обработка выбора области и города"""
+    """Обработка выбора региона и переключения уведомлений"""
     user_id = update.effective_user.id
     text = update.message.text
     
-    if 'awaiting_oblast' in context.user_data:
-        oblast_uid = next((uid for uid, name in OBLASTS.items() if name == text), None)
-        if oblast_uid:
-            with get_connection() as conn:
-                update_user_setting(conn, user_id, 'oblast_uid', oblast_uid)
-                update_user_setting(conn, user_id, 'location_uid', None)
-                conn.commit()
-            await update.message.reply_text(f"Выбрана область: {text}")
-            del context.user_data['awaiting_oblast']
-            settings = await show_air_raid_menu(update, context)
-            logger.info(f"After oblast selection, settings: {settings}")
-        elif text == '⬅️ Вернуться в меню тревог':
-            del context.user_data['awaiting_oblast']
-            await show_air_raid_menu(update, context)
-        else:
-            await update.message.reply_text("Выберите область из списка!")
-    
-    elif 'awaiting_location' in context.user_data:
-        with get_connection() as conn:
-            settings = get_user_settings(conn, user_id)
-            oblast_uid = settings['oblast_uid']
-        
-        locations = LOCATIONS.get(oblast_uid, {})
-        location_uid = next((uid for uid, name in locations.items() if name == text), None)
-        
-        if location_uid:
-            with get_connection() as conn:
-                update_user_setting(conn, user_id, 'location_uid', location_uid)
-                conn.commit()
-            await update.message.reply_text(f"Выбрана локация: {text}")
-            del context.user_data['awaiting_location']
-            settings = await show_air_raid_menu(update, context)
-            logger.info(f"After location selection, settings: {settings}")
-        elif text == '⬅️ Вернуться в меню тревог':
-            del context.user_data['awaiting_location']
-            await show_air_raid_menu(update, context)
-        else:
-            await update.message.reply_text("Выберите локацию из списка!")
+    if 'awaiting_region' in context.user_data:
+        try:
+            headers = {"Authorization": ALERTS_API_TOKEN}
+            async with aiohttp.ClientSession() as session:
+                async with session.get(REGIONS_API_URL, headers=headers) as response:
+                    regions = await response.json()
+            
+            region = next((r for r in regions if r["regionName"] == text and r["regionType"] == "State"), None)
+            if region:
+                with get_connection() as conn:
+                    update_user_setting(conn, user_id, 'region_id', region["regionId"])
+                    update_user_setting(conn, user_id, 'region_name', region["regionName"])
+                    conn.commit()
+                await update.message.reply_text(f"Выбран регион: {text}")
+                del context.user_data['awaiting_region']
+                settings = await show_air_raid_menu(update, context)
+                logger.info(f"After region selection, settings: {settings}")
+            elif text == '⬅️ Вернуться в меню тревог':
+                del context.user_data['awaiting_region']
+                await show_air_raid_menu(update, context)
+            else:
+                await update.message.reply_text("Выберите регион из списка!")
+        except Exception as e:
+            logger.error(f"Ошибка при выборе региона: {e}")
+            await update.message.reply_text("Ошибка при выборе региона")
     
     else:
         if text == '🔍 Проверить тревоги':
             await check_air_raid(update, context)
-        elif text == '🌍 Выбрать область':
-            await select_oblast(update, context)
-        elif text == '🏘️ Выбрать город':
-            await select_location(update, context)
+        elif text == '🌍 Выбрать регион':
+            await select_region(update, context)
         elif text in ('🔔 Включить уведомления', '🔕 Отключить уведомления'):
             await toggle_notifications(update, context)
         elif text == '⬅️ Вернуться в главное меню':
