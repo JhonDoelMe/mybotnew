@@ -1,8 +1,14 @@
 # currency.py
 import requests
 import json
+import config
 import logging
 from typing import Optional, List, Dict, Any
+
+# --- ДОБАВЛЕНО: Необходимые импорты для обработчика команд ---
+import telegram # Или можно: from telegram import Update
+from telegram.ext import ContextTypes
+# --- КОНЕЦ ДОБАВЛЕНИЙ ---
 
 # Настройка логирования
 logging.basicConfig(
