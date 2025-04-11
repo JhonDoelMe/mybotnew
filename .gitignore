@@ -18,3 +18,4 @@ bot_persistence.pkl
 __pycache__/
 *.pyc
 test_bot.py
+test_api.py

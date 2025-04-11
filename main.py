@@ -245,11 +245,10 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         message = "🚨 *Активні тривоги:*\n\n"
         for region in active_regions:
             name = helpers.escape_markdown(region.get('regionName', 'Невідомий регіон'), version=2)
-            types = ', '.join(
-                helpers.escape_markdown(a.get('type', 'невідомо'), version=2)
-                for a in region.get('activeAlerts', [])
-            )
-            message += f"\\- {name}: {types}\n"
+            alert_types = [air_raid.ALERT_TYPES_TRANSLATION.get(a.get('type', 'Невідомо'), a.get('type', 'Невідомо')) 
+                         for a in region.get('activeAlerts', [])]
+            types_str = ", ".join(alert_types)
+            message += f"\\- {name}: {types_str}\n"
         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
 async def button_callback(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -336,8 +335,6 @@ async def cleanup_subscribers(context: ContextTypes.DEFAULT_TYPE) -> None:
             db.remove_subscriber(user_id)
             logger.info(f"Removed inactive subscriber {user_id}")
 
-import asyncio
-
 def main():
     logger.info("Starting bot...")
     application = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -372,5 +369,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
-short_tb = ''.join(tb_list[-3:])[-1000:]
