@@ -127,7 +127,7 @@ async def alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         current_alerts = await get_air_raid_status()
         if current_alerts is None:
-            await update.message.reply_text("Не вдалося отримати статус тривог.")
+            await update.message.reply_text("Не вдалося отримати статус тривог. Перевірте токен API тривог.")
             return
 
         selected_region = context.user_data.get('selected_region')

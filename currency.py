@@ -40,11 +40,12 @@ async def get_currency_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     user_currencies = db.get_user_currencies(user_id) or ['USD', 'EUR']
-    message = "💵 *Курси валют \\(UAH\\):*\n\n"  # Экранируем скобки
+    message = "💵 *Курси валют \\(UAH\\):*\n\n"
     for code in user_currencies:
         if code in rates:
             rate = rates[code]
-            message += f"{helpers.escape_markdown(code, version=2)}: {1/rate:.2f} UAH\n"
+            rate_str = f"{1/rate:.2f}".replace('.', '\\.')  # Экранируем точку
+            message += f"{helpers.escape_markdown(code, version=2)}: {rate_str} UAH\n"
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
 def add_currency_code(user_id: int, code: str) -> bool:

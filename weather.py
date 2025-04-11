@@ -68,7 +68,7 @@ async def get_weather_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         if weather_data:
             await update.message.reply_text(weather_data)
         else:
-            await update.message.reply_text(f"Не вдалося отримати погоду для {city}.")
+            await update.message.reply_text(f"Не вдалося отримати погоду для {city}. Перевірте ключ API погоди.")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Помилка: {str(e)}")
         raise
