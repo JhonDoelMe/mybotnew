@@ -1,9 +1,6 @@
-python-telegram-bot>=20.0
-python-dotenv
-apscheduler
-pytz
-requests
-beautifulsoup4
-telethon
-cachetools
-aiohttp
+python-telegram-bot==20.8
+requests==2.32.3
+python-dotenv==1.0.1
+cachetools==5.5.0
+pytest==8.3.3
+pytest-asyncio==0.24.0

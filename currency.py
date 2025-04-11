@@ -1,71 +1,62 @@
-# currency.py
 import requests
-import json
-import config
 import logging
 from typing import Optional, List, Dict, Any
+from cachetools import TTLCache
 
-# --- ДОБАВЛЕНО: Необходимые импорты для обработчика команд ---
-import telegram # Или можно: from telegram import Update
+import telegram
 from telegram.ext import ContextTypes
-# --- КОНЕЦ ДОБАВЛЕНИЙ ---
 
-# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# URL API ПриватБанка для получения курсов наличной валюты
 PRIVAT_API_URL = "https://api.privatbank.ua/p24api/pubinfo?exchange&json&coursid=5"
+currency_cache = TTLCache(maxsize=1, ttl=3600)  # Cache for 1 hour
 
 def get_currency_rates() -> Optional[List[Dict[str, Any]]]:
     """
-    Получает курсы валют с API ПриватБанка.
+    Fetches currency rates from PrivatBank API.
 
     Returns:
-        Optional[List[Dict[str, Any]]]: Список словарей с данными о курсах или None в случае ошибки.
+        Optional[List[Dict[str, Any]]]: List of currency rates or None on error.
     """
+    if 'rates' in currency_cache:
+        logger.info("Returning cached currency rates.")
+        return currency_cache['rates']
+
     try:
         response = requests.get(PRIVAT_API_URL, timeout=10)
-        response.raise_for_status() # Проверка на HTTP ошибки
+        response.raise_for_status()
 
         if response.status_code == 200:
             try:
                 data = response.json()
                 if isinstance(data, list):
+                    currency_cache['rates'] = data
                     return data
-                else:
-                    logger.error(f"Currency API returned unexpected data type: {type(data)}. Expected list.")
-                    return None
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to decode JSON response from Currency API: {e}")
-                logger.debug(f"Response text: {response.text}")
+                logger.error(f"Unexpected data type: {type(data)}")
                 return None
-            except Exception as e:
-                 logger.error(f"An unexpected error occurred during JSON processing: {e}")
-                 return None
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to decode JSON: {e}")
+                return None
         else:
-            logger.error(f"Currency API request failed with status code {response.status_code}: {response.text}")
+            logger.error(f"API request failed with status {response.status_code}")
             return None
-
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching currency rates: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"An unexpected error occurred in get_currency_rates: {e}")
         return None
 
 def format_currency_message(rates: List[Dict[str, Any]]) -> str:
     """
-    Форматирует сообщение с курсами валют.
+    Formats a message with currency rates.
 
     Args:
-        rates: Список словарей с данными о курсах.
+        rates: List of currency rate dictionaries.
 
     Returns:
-        str: Отформатированное сообщение для пользователя.
+        str: Formatted message for Telegram.
     """
     if not rates:
         return "Не вдалося отримати курси валют."
@@ -77,16 +68,20 @@ def format_currency_message(rates: List[Dict[str, Any]]) -> str:
         buy = rate.get('buy')
         sale = rate.get('sale')
         if ccy and base_ccy and buy and sale:
-            # Отображаем только USD и EUR для простоты
             if ccy in ['USD', 'EUR']:
-                 message += f"🇺🇸 {ccy}/{base_ccy}:\n" \
+                message += f"🇺🇸 {ccy}/{base_ccy}:\n" \
                            f"   Купівля: {float(buy):.2f}\n" \
                            f"   Продаж:  {float(sale):.2f}\n\n"
-
     return message.strip()
 
 async def get_currency_command(update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик для получения и отправки курсов валют."""
+    """
+    Handler for currency rates command.
+
+    Args:
+        update: Telegram update object.
+        context: Telegram context.
+    """
     rates = get_currency_rates()
     if rates:
         message = format_currency_message(rates)

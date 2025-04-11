@@ -10,3 +10,10 @@ locations.json
 bot_database.db
 session.session
 session.session-journal
+.env
+config.json
+bot_database.db
+bot.log
+bot_persistence.pkl
+__pycache__/
+*.pyc
