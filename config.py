@@ -26,7 +26,7 @@ def validate_config(cfg: Dict[str, Any]) -> None:
 
     # Validate UKRAINE_ALARM_TOKEN
     alarm_token = cfg.get('UKRAINE_ALARM_TOKEN')
-    if not alarm_token or not re.match(r'^[\w:]{36}$', alarm_token):
+    if not alarm_token or not re.match(r'^[\w]{8}:[\w]{32}$', alarm_token):
         errors.append("UKRAINE_ALARM_TOKEN is missing or has invalid format.")
 
     # Validate WEATHER_API_KEY
